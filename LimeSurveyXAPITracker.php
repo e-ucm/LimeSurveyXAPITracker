@@ -420,6 +420,9 @@ class LimeSurveyXAPITracker extends PluginBase
                 $this->customLog($comment . " : " . $surveyId);
             }
             
+            $surveyUrl = Yii::app()->getController()->createAbsoluteUrl('survey/index', array('sid' => $surveyId)); // Adjust 'lang' as needed.
+            $this->customLog($surveyUrl);
+
             // Try to fetch the current from the URL manually or default language
             $surveyInfo = Survey::model()->findByPk($surveyId);
             $languageRequest=Yii::app()->request->getParam('lang', null);
@@ -427,7 +430,7 @@ class LimeSurveyXAPITracker extends PluginBase
 
             // Get token from the URL manually
             $token=Yii::app()->request->getParam('token', null);
-            $registrationId="";
+            $registrationId=$this->uuidv4();
             $actor=array(
                 "account" => 
                     array(
@@ -444,7 +447,7 @@ class LimeSurveyXAPITracker extends PluginBase
                 ),
             );
             $surveyObject=array(
-                "id" => $surveyId,
+                "id" => $surveyUrl,
                 "definition" => array(
                     "type" => "https://w3id.org/xapi/seriousgames/activity-types/serious-game"
                 )
@@ -462,6 +465,7 @@ class LimeSurveyXAPITracker extends PluginBase
                 #    $timestamp = $response['submitdate'];    
                 #}
                 $progressedStatement=array(
+                    "id"=>$this->uuidv4(),
                     "actor" => $actor,
                     "object" => $surveyObject,
                     "verb" => array("id" => "http://adlnet.gov/expapi/verbs/progressed"),
@@ -474,6 +478,7 @@ class LimeSurveyXAPITracker extends PluginBase
                     "timestamp" => $stringTimestampUTC
                 );
                 $completedStatement=array(
+                    "id"=>$this->uuidv4(),
                     "actor" => $actor,
                     "verb" => array("id" => "http://adlnet.gov/expapi/verbs/completed"),
                     "result" => array("" => "1", "completion" => "1"),
@@ -513,7 +518,10 @@ class LimeSurveyXAPITracker extends PluginBase
                         } elseif($isMulti) {
                             $title=$question["title"];
                             if(array_key_exists($question["parent_qid"], $multiTitle)) {
-                                $title=$multiTitle[$question["parent_qid"]]["title"] . "[" . $title . "]";
+                                $tmpTitle=$title;
+                                $foundMultiTitle=$multiTitle[$question["parent_qid"]]["title"];
+                                $title=$foundMultiTitle . "[" . $tmpTitle . "]";
+                                $titleUrl = $foundMultiTitle . "/" . $tmpTitle;
                                 $this->customLog($title);
                                 if(array_key_exists($title,$fullResponse)) {
                                     $response=$fullResponse[$title];
@@ -522,6 +530,7 @@ class LimeSurveyXAPITracker extends PluginBase
                                     $this->customLog($title .  "not found in response!");
                                 }
                             } else {
+                                $titleUrl=$title;
                                 if(array_key_exists($title,$fullResponse)) {
                                     $response=$fullResponse[$title];
                                     $this->customLog($response);
@@ -531,6 +540,7 @@ class LimeSurveyXAPITracker extends PluginBase
                             }
                         } else {
                             $title=$question["title"];
+                            $titleUrl=$title;
                             if(array_key_exists($title,$fullResponse)) {
                                 $response=$fullResponse[$title];
                                 $this->customLog($response);
@@ -540,10 +550,11 @@ class LimeSurveyXAPITracker extends PluginBase
                         }
                         if($response !== "") {
                             $statement = array(
+                                "id"=>$this->uuidv4(),
                                 "actor" => $actor,
                                 "verb" => array("id"=> "https://w3id.org/xapi/adb/verbs/selected"),
                                 "object" => array(
-                                    "id" => "$surveyId/$title",
+                                    "id" => "$surveyUrl/$titleUrl",
                                     "definition" => array(
                                         "type" => "http://adlnet.gov/expapi/activities/question"
                                     ),
@@ -552,10 +563,10 @@ class LimeSurveyXAPITracker extends PluginBase
                                     )
                                 ),
                                 "result" => array(
-                                    "response" => $response
+                                    "response" => "$response"
                                 ),
                                 "context" => $context,
-                                "timestamp" => $stringTimestampUTC
+                                "timestamp" => "$stringTimestampUTC"
                             );
                             array_push($ResponsesStatement,$statement);
                         }
@@ -565,6 +576,7 @@ class LimeSurveyXAPITracker extends PluginBase
                     } else {
                         $res=$lastpage/$total_pagecount;
                         $progressedStatement = array(
+                            "id"=>$this->uuidv4(),
                             "actor" => $actor,
                             "verb" => array("id"=> "http://adlnet.gov/expapi/verbs/progressed"),
                             "object" => $surveyObject,
@@ -587,29 +599,21 @@ class LimeSurveyXAPITracker extends PluginBase
                 }
             } else {
                 $sartedStatement = array(
+                    "id"=>$this->uuidv4(),
                     "actor" => $actor,
                     "verb" => array("id"=> "http://adlnet.gov/expapi/verbs/initialized"),
-                    "object" => array(
-                        "id" => $surveyId,
-                        "definition" => array(
-                            "type" => "https://w3id.org/xapi/seriousgames/activity-types/serious-game"
-                        )
-                    ),
+                    "object" => $surveyObject,
                     "context" => $context,
                     "timestamp" => "$stringTimestampUTC"
                 );
                 $progressedStatement=array(
+                    "id"=>$this->uuidv4(),
                     "actor" => $actor,
-                    "object" => array(
-                        "id" => $surveyId,
-                        "definition" => array(
-                            "type" => "https://w3id.org/xapi/seriousgames/activity-types/serious-game"
-                        )
-                    ),
+                    "object" => $surveyObject,
                     "verb" => array("id" => "http://adlnet.gov/expapi/verbs/progressed"),
                     "result" => array(
                         "extensions" => array(
-                            "https://w3id.org/xapi/seriousgames/extensions/progress" => 0
+                            "https://w3id.org/xapi/seriousgames/extensions/progress" => "0"
                         )
                     ),
                     "context" => $context,
@@ -633,6 +637,14 @@ class LimeSurveyXAPITracker extends PluginBase
             $rawResult = Yii::app()->db->createCommand($query)->queryRow();
             $result = $rawResult;
             return $result;
+        }
+
+        private function uuidv4() {
+            $data = random_bytes(16);
+            $data[6] = chr(ord($data[6]) & 0x0f | 0x40); // set version to 0100
+            $data[8] = chr(ord($data[8]) & 0x3f | 0x80); // set bits 6-7 to 10
+
+            return vsprintf('%s%s-%s-%s-%s-%s%s%s', str_split(bin2hex($data), 4));
         }
 
         /***** ***** ***** ***** *****
