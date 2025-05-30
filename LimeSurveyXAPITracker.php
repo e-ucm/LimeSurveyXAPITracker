@@ -30,55 +30,11 @@ class LimeSurveyXAPITracker extends PluginBase
 
 		public function init()
 		{ 
-            $this->subscribe('beforeControllerAction');
             $this->subscribe('beforeSurveySettings');
             $this->subscribe('newSurveySettings');
             $this->subscribe('afterSurveyComplete');
             $this->subscribe('beforeSurveyPage');
             $this->subscribe('afterResponseSave');
-        }
-
-        public function beforeControllerAction()
-        {
-            $route = Yii::app()->getRequest()->getPathInfo();
-            $pluginName=self::$name;
-            if ($route === "api/plugin/$pluginName/settings/update") {
-                $this->runUpdate();
-                Yii::app()->end();
-            }
-        }
-
-        protected function runUpdate()
-        {
-            $req    = Yii::app()->getRequest();
-            $token  = $req->getPost('api_token');
-            $settings = $req->getPost('settings');      // array of key=>value
-            $surveyId = (int)$req->getPost('survey_id'); // ← optional
-
-            if ($token !== $this->getGlobalSetting('sAuthToken')) {
-                header('HTTP/1.1 401 Unauthorized');
-                echo json_encode(['error'=>'invalid token']);
-                return;
-            }
-            if (!is_array($settings)) {
-                header('HTTP/1.1 400 Bad Request');
-                echo json_encode(['error'=>'missing settings']);
-                return;
-            }
-
-            /** @var \LimeSurvey\PluginManager $pm */
-            $pm = Yii::app()->getPluginManager();
-
-            if ($surveyId > 0) {
-                // This is the magic call:
-                //   3rd parameter = survey ID tells LS you want survey-scope settings
-                $pm->updatePluginSettings($this->name, $settings, $surveyId);
-            } else {
-                // fallback to global settings
-                $pm->updatePluginSettings($this->name, $settings);
-            }
-
-            echo json_encode(['result'=>'ok']);
         }
 
         public function afterSurveyComplete() {
@@ -96,6 +52,23 @@ class LimeSurveyXAPITracker extends PluginBase
             return;
         }
 
+        public function setSurveySettings($surveyId, $settingsArray) {
+            if($surveyId === 0) {
+                $this->setGlobalSettings($settingsArray);
+            } else {
+                $this->customLog($surveyId);
+                foreach($settingsArray as $key => $value) {
+                    $this->customLog("key: $key, value: $value\n");
+                }
+            };
+        }
+
+        public function setGlobalSettings($settingsArray) {
+            foreach($settingsArray as $key => $value) {
+                $this->customLog("key: $key, value: $value\n");
+            }
+        }
+
         public function newSurveySettings()
         {
             $event = $this->event;
@@ -109,7 +82,7 @@ class LimeSurveyXAPITracker extends PluginBase
              $event = $this->event;
             $surveyId = $event->get('survey');
             $settings=array();
-            if((boolean)$this->getGlobalSetting('surveylrsendpointss', false)) {
+            if((boolean)$this->getGlobalSetting('surveylrsendpoint', false)) {
                 $endpoint= $this->get('lrs-endpoint', 'Survey', $surveyId);
                 $settings=array(
                     'info1' => array(
@@ -190,9 +163,8 @@ class LimeSurveyXAPITracker extends PluginBase
                 ),
                 'sId' => array(
                     'type' => 'string',
-                    'default' => '000000',
                     'label' => 'The ID of the surveys:',
-                    'default' => $this->getGlobalSetting('sId', ''),
+                    'default' => $this->getGlobalSetting('sId', '000000'),
                     'htmlOptions' => [
                         'readonly' => in_array('sId', $fixedPluginSettings)
                     ],
@@ -256,6 +228,24 @@ class LimeSurveyXAPITracker extends PluginBase
                     ],
                     'help' => 'OAuth Password'
                 ),
+                'OAuth2TokenEndpoint' => array(
+                    'type' => 'string',
+                    'label' => 'OAuth2 Token Endpoint',
+                    'default' => $this->getGlobalSetting('OAuth2TokenEndpoint', ''),
+                    'htmlOptions' => [
+                        'readonly' => in_array('OAuth2TokenEndpoint', $fixedPluginSettings)
+                    ],
+                    'help' => 'OAuth2 Token Endpoint'
+                ),
+                'OAuth2ClientId' => array(
+                    'type' => 'string',
+                    'label' => 'OAuth2 Client ID',
+                    'default' => $this->getGlobalSetting('OAuth2ClientId', ''),
+                    'htmlOptions' => [
+                        'readonly' => in_array('OAuth2ClientId', $fixedPluginSettings)
+                    ],
+                    'help' => 'OAuth2 Client ID'
+                ),
                 'sToken' => array(
                     'type' => 'string',
                     'label' => 'API Token',
@@ -291,7 +281,7 @@ class LimeSurveyXAPITracker extends PluginBase
                     ],
                     'label' => 'Enable Debug Mode',
                     'help' => 'Enable debugmode to see what data is transmitted. Respondents will see this as well so you should turn this off for live surveys'
-                ),
+                )
 		    );
 
             /* Get current */
@@ -402,16 +392,30 @@ class LimeSurveyXAPITracker extends PluginBase
 
         function loginViaOAuth() {
             $oauthType = $this->getGlobalSetting('oAuthType','');
+            $this->customLog($oauthType);
             $username=$this->getGlobalSetting('usernameOAuth');
             $password=$this->getGlobalSetting('passwordOAuth');
             if($oauthType == "oauth2") {
+                $tokenEndpoint=$this->getGlobalSetting('OAuth2TokenEndpoint');
+                $clientId=$this->getGlobalSetting('OAuth2ClientId');
+                $authParams = array(
+                    "grant_type" => "password",
+                    "client_id" => $clientId,
+                    "username" => $username,
+                    "password" => $password,
+                );
+                $this->customLog($tokenEndpoint . "Params : " . http_build_query($authParams));
+                $res = $this->httpPost($tokenEndpoint, http_build_query($authParams), false, "application/x-www-form-urlencoded");
+                $this->customLog("Res : " . $res);
+                $decoded=json_decode($res, true);
+                $auth="Bearer " . $decoded["access_token"];
             } else {
                 $combinedString = $username . ":" . $password;
                 $token = base64_encode($combinedString);
                 $auth="Basic " . $token;
-                $this->customLog("Auth : " . $auth);
-                return $auth;
             }
+            $this->customLog("Type : " . $oauthType . " | Auth : " . $auth);
+            return $auth;
         }
 
 		/***** ***** ***** ***** *****
@@ -650,7 +654,7 @@ class LimeSurveyXAPITracker extends PluginBase
                 $endpoint = $this->getGlobalSetting('lrsEndpoint');
             }
             $url = $endpoint . "/statements";
-            $result = $this->httpPost($url, $postData);
+            $result = $this->httpPost($url, $postData, true);
             $this->debug($url, $statements, $result, $time_start, $comment);
             return;
 
@@ -678,7 +682,7 @@ class LimeSurveyXAPITracker extends PluginBase
         * creates and executes a POST request
         * returns the output
         ***** ***** ***** ***** *****/
-        private function httpPost($url, $postData)
+        private function httpPost($url, $postData, $authorization, $contentType="application/json")
         {
             $bug = $this->getGlobalSetting('sBug');
             $this->customLog('HTTP call started');
@@ -700,10 +704,12 @@ class LimeSurveyXAPITracker extends PluginBase
             curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
             curl_setopt($ch, CURLOPT_POSTFIELDS, $postData);
             $headers=[
-                "Content-Type: application/json",
+                "Content-Type: " . $contentType,
                 "Content-Length: " . strlen($postData), // Helps some servers parse JSON correctly
-                "Authorization: " . $this->loginViaOAuth()
             ];
+            if($authorization) {
+                array_push($headers, "Authorization: " . $this->loginViaOAuth());
+            }
             
             if($bug) {
                 $this->customLog(implode(" , ", $headers));
