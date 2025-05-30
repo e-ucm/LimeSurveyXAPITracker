@@ -109,7 +109,7 @@ class LimeSurveyXAPITracker extends PluginBase
              $event = $this->event;
             $surveyId = $event->get('survey');
             $settings=array();
-            if((boolean)$this->getGlobalSetting('studylrsendpointws', false)) {
+            if((boolean)$this->getGlobalSetting('surveylrsendpointss', false)) {
                 $endpoint= $this->get('lrs-endpoint', 'Survey', $surveyId);
                 $settings=array(
                     'info1' => array(
@@ -198,14 +198,14 @@ class LimeSurveyXAPITracker extends PluginBase
                     ],
                     'help' => 'The unique number of the surveys. You can set multiple surveys with an "," as separator. Example: 123456, 234567, 345678. Let empty to treat all'
                 ),
-                'studylrsendpoint' => array(
+                'surveylrsendpoint' => array(
                     'type' => 'checkbox',
-                    'default' => $this->getGlobalSetting('studylrsendpoint', false),
+                    'default' => $this->getGlobalSetting('surveylrsendpoint', false),
                     'htmlOptions' => [
-                        'readonly' => in_array('studylrsendpoint', $fixedPluginSettings)
+                        'readonly' => in_array('surveylrsendpoint', $fixedPluginSettings)
                     ],
-                    'label' => 'Enable Study LRS Endpoint Mode',
-                    'help' => 'Enable Study LRS Endpoint Mode.'
+                    'label' => 'Enable Survey LRS Endpoint Mode',
+                    'help' => 'Enable Survey LRS Endpoint Mode.'
                 ),
                 'lrsEndpoint' => array(
                     'type' => 'string',
@@ -226,9 +226,13 @@ class LimeSurveyXAPITracker extends PluginBase
                     'help' => 'The actor homepage of the xapi data'
                 ),
                 'oAuthType' => array(
-                    'type' => 'checkbox',
+                    'type' => 'select',
                     'label' => 'oAuth Type',
                     'default' => $this->getGlobalSetting('oAuthType', ''),
+                    'options' => [
+                        'oauth1' => 'OAuth 1',
+                        'oauth2' => 'OAuth 2',
+                    ],
                     'htmlOptions' => [
                         'readonly' => in_array('oAuthType', $fixedPluginSettings)
                     ],
@@ -396,6 +400,20 @@ class LimeSurveyXAPITracker extends PluginBase
             }
         }
 
+        function loginViaOAuth() {
+            $oauthType = $this->getGlobalSetting('oAuthType','');
+            $username=$this->getGlobalSetting('usernameOAuth');
+            $password=$this->getGlobalSetting('passwordOAuth');
+            if($oauthType == "oauth2") {
+            } else {
+                $combinedString = $username . ":" . $password;
+                $token = base64_encode($combinedString);
+                $auth="Basic " . $token;
+                $this->customLog("Auth : " . $auth);
+                return $auth;
+            }
+        }
+
 		/***** ***** ***** ***** *****
 		* Send XAPI Data From Survey Result
 		* @return array | response
@@ -435,7 +453,7 @@ class LimeSurveyXAPITracker extends PluginBase
                 "account" => 
                     array(
                         "name" => $token,
-                        "homepage" => $this->getGlobalSetting('actorhomepage')
+                        "homePage" => $this->getGlobalSetting('actorhomepage')
                     )
             );
             $context=array(
@@ -443,8 +461,8 @@ class LimeSurveyXAPITracker extends PluginBase
                     "category"=> array(
                         array("id"=>"https://w3id.org/xapi/seriousgame")
                     ),
-                "registration"=>$registrationId
                 ),
+                "registration"=>$registrationId,
             );
             $surveyObject=array(
                 "id" => $surveyUrl,
@@ -452,7 +470,7 @@ class LimeSurveyXAPITracker extends PluginBase
                     "type" => "https://w3id.org/xapi/seriousgames/activity-types/serious-game"
                 )
             );
-            $stringTimestampUTC=gmdate('Y-m-d\TH:i:s\Z', $time_start);
+            $stringTimestampUTC=gmdate('Y-m-d\TH:i:s\Z', (int)$time_start);
             // Access the API
             $api = $this->pluginManager->getAPI();
             // Include response data only for completion
@@ -481,13 +499,13 @@ class LimeSurveyXAPITracker extends PluginBase
                     "id"=>$this->uuidv4(),
                     "actor" => $actor,
                     "verb" => array("id" => "http://adlnet.gov/expapi/verbs/completed"),
-                    "result" => array("" => "1", "completion" => "1"),
+                    "result" => array("success" => true, "completion" => true),
                     "object" => $surveyObject,
                     "context" => $context,
                     "timestamp" => $stringTimestampUTC
                 );
                 
-                $details=array($progressedStatement, $completedStatement);
+                $statements=array($progressedStatement, $completedStatement);
             } else if($comment === 'afterResponseSave') {
                 // Get the responses for the survey with the specified condition
                 $responses = $this->getLastResponse($surveyId, $token);
@@ -556,11 +574,15 @@ class LimeSurveyXAPITracker extends PluginBase
                                 "object" => array(
                                     "id" => "$surveyUrl/$titleUrl",
                                     "definition" => array(
+                                        "name"=> array(
+                                            $lang => $title,
+                                        ),
+                                        "description"=> array(
+                                            $lang => $question["question"],
+                                        ),
                                         "type" => "http://adlnet.gov/expapi/activities/question"
                                     ),
-                                    "display"=> array(
-                                        $lang => $question["question"],
-                                    )
+                                    
                                 ),
                                 "result" => array(
                                     "response" => "$response"
@@ -572,7 +594,7 @@ class LimeSurveyXAPITracker extends PluginBase
                         }
                     }
                     if($lastpage === $total_pagecount) {
-                        $details=$ResponsesStatement;
+                        $statements=$ResponsesStatement;
                     } else {
                         $res=$lastpage/$total_pagecount;
                         $progressedStatement = array(
@@ -589,7 +611,7 @@ class LimeSurveyXAPITracker extends PluginBase
                             "timestamp" => "$stringTimestampUTC"
                         );
                         array_push($ResponsesStatement,$progressedStatement);
-                        $details=$ResponsesStatement;
+                        $statements=$ResponsesStatement;
                     }
                     
                     // Step 3: Release the session key
@@ -619,13 +641,17 @@ class LimeSurveyXAPITracker extends PluginBase
                     "context" => $context,
                     "timestamp" => "$stringTimestampUTC"
                 );
-                $details=array($sartedStatement, $progressedStatement);
+                $statements=array($sartedStatement, $progressedStatement);
             }
-            $parameters=array("statements" => $details);
-            $postData=json_encode($parameters);
-            $url = $this->getGlobalSetting('sUrl');
-            $resultSent = $this->httpPost($url, $postData);
-            $this->debug($url, $parameters, $resultSent, $time_start, $comment);
+            $postData=json_encode($statements);
+            if((boolean)$this->getGlobalSetting('surveylrsendpoint', false)) {
+                $endpoint= $this->get('lrs-endpoint', 'Survey', $surveyId);
+            } else {
+                $endpoint = $this->getGlobalSetting('lrsEndpoint');
+            }
+            $url = $endpoint . "/statements";
+            $result = $this->httpPost($url, $postData);
+            $this->debug($url, $statements, $result, $time_start, $comment);
             return;
 
         }
@@ -673,12 +699,10 @@ class LimeSurveyXAPITracker extends PluginBase
             curl_setopt($ch, CURLOPT_POST, true);
             curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
             curl_setopt($ch, CURLOPT_POSTFIELDS, $postData);
-            $signingSecret = $this->getGlobalSetting('sAuthToken', '');
-            $authToken=$signingSecret;
             $headers=[
                 "Content-Type: application/json",
                 "Content-Length: " . strlen($postData), // Helps some servers parse JSON correctly
-                "Authorization: Bearer " . $authToken
+                "Authorization: " . $this->loginViaOAuth()
             ];
             
             if($bug) {
