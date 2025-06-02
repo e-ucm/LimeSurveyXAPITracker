@@ -239,6 +239,15 @@ class LimeSurveyXAPITracker extends PluginBase
                     ],
                     'help' => 'OAuth2 Token Endpoint'
                 ),
+                'OAuth2LogoutEndpoint' => array(
+                    'type' => 'string',
+                    'label' => 'OAuth2 Logout Endpoint',
+                    'default' => $this->getGlobalSetting('OAuth2LogoutEndpoint', ''),
+                    'htmlOptions' => [
+                        'readonly' => in_array('OAuth2LogoutEndpoint', $fixedPluginSettings)
+                    ],
+                    'help' => 'OAuth2 Logout Endpoint'
+                ),
                 'OAuth2ClientId' => array(
                     'type' => 'string',
                     'label' => 'OAuth2 Client ID',
@@ -247,33 +256,6 @@ class LimeSurveyXAPITracker extends PluginBase
                         'readonly' => in_array('OAuth2ClientId', $fixedPluginSettings)
                     ],
                     'help' => 'OAuth2 Client ID'
-                ),
-                'sToken' => array(
-                    'type' => 'string',
-                    'label' => 'API Token',
-                    'default' => $this->getGlobalSetting('sToken', ''),
-                    'htmlOptions' => [
-                        'readonly' => in_array('sToken', $fixedPluginSettings)
-                    ],
-                    'help' => 'Maybe you need a token to verify updated settings?'
-                ),
-                'sHeaderSignatureName' => array(
-                    'type' => 'string',
-                    'label' => 'Header Signature Name',
-                    'default' => $this->getGlobalSetting('sHeaderSignatureName', 'X-Signature-SHA256'),
-                    'htmlOptions' => [
-                        'readonly' => in_array('sHeaderSignatureName', $fixedPluginSettings)
-                    ],
-                    'help' => 'Header Signature Name. Default to X-Signature-SHA256.'
-                ),
-                'sHeaderSignaturePrefix' => array(
-                    'type' => 'string',
-                    'label' => 'Header Signature Prefix',
-                    'default' => $this->getGlobalSetting('sHeaderSignaturePrefix', ''),
-                    'htmlOptions' => [
-                        'readonly' => in_array('sHeaderSignaturePrefix', $fixedPluginSettings)
-                    ],
-                    'help' => 'Header Signature Prefix'
                 ),
                 'sBug' => array(
                     'type' => 'checkbox',
@@ -398,17 +380,35 @@ class LimeSurveyXAPITracker extends PluginBase
             if($oauthType == "oauth2") {
                 $tokenEndpoint=$this->getGlobalSetting('OAuth2TokenEndpoint');
                 $clientId=$this->getGlobalSetting('OAuth2ClientId');
-                $authParams = array(
-                    "grant_type" => "password",
-                    "client_id" => $clientId,
-                    "username" => $username,
-                    "password" => $password,
-                );
-                $this->customLog($tokenEndpoint . "Params : " . http_build_query($authParams));
-                $res = $this->httpPost($tokenEndpoint, http_build_query($authParams), false, "application/x-www-form-urlencoded");
-                $this->customLog("Res : " . $res);
-                $decoded=json_decode($res, true);
-                $auth="Bearer " . $decoded["access_token"];
+                $expire_at=$this->get("expire_at", null, null, "");
+                if($expire_at != "") {
+                    $access_token=$this->get("access_token", null, null, "");
+                    $time_start=microtime(true);
+                    $this->customLog("Expire at : " . $expire_at . " start : " . $time_start);
+                    if((int)$time_start > (int)$expire_at) {
+                        if((int)$time_start > (int)$refresh_expires_at) {
+                            $access_token=$this->authOAuth2ViaUserAndPassword($clientId, $username, $password);
+                        } else {
+                            $refresh_token=$this->get("refresh_token", null, null, "");
+                            $authParams = array(
+                                "grant_type" => "refresh_token",
+                                "client_id" => $clientId,
+                                "refresh_token" => $refresh_token,
+                            );
+                            $this->customLog($tokenEndpoint . "Params : " . http_build_query($authParams));
+                            $res = $this->httpPost($tokenEndpoint, http_build_query($authParams), false, "application/x-www-form-urlencoded");
+                            $this->customLog($res);
+                            $decoded=json_decode($res, true);
+                            $access_token=$decoded["access_token"];
+                            $this->set("access_token", $access_token);
+                            $timestamp= (int)microtime(true) + (int)$decoded["expires_in"];
+                            $this->set("expire_at", $timestamp);
+                        }
+                    }
+                } else {
+                    $access_token=$this->authOAuth2ViaUserAndPassword($clientId, $username, $password);
+                }
+                $auth="Bearer " . $access_token;
             } else {
                 $combinedString = $username . ":" . $password;
                 $token = base64_encode($combinedString);
@@ -416,6 +416,52 @@ class LimeSurveyXAPITracker extends PluginBase
             }
             $this->customLog("Type : " . $oauthType . " | Auth : " . $auth);
             return $auth;
+        }
+
+        function authOAuth2ViaUserAndPassword($clientId, $username, $password) {
+            $tokenEndpoint=$this->getGlobalSetting('OAuth2TokenEndpoint');
+            $authParams = array(
+                "grant_type" => "password",
+                "client_id" => $clientId,
+                "username" => $username,
+                "password" => $password,
+            );
+            $this->customLog($tokenEndpoint . "Params : " . http_build_query($authParams));
+            $res = $this->httpPost($tokenEndpoint, http_build_query($authParams), false, "application/x-www-form-urlencoded");
+            $this->customLog($res);
+            $time_start=microtime(true);
+            $decoded=json_decode($res, true);
+            $timestamp= (int)$time_start + (int)$decoded["expires_in"];
+            $refreshtimestamp= (int)$time_start + (int)$decoded["refresh_expires_in"];
+            $this->set("expire_at", $timestamp);
+            $this->set("refresh_expires_at", $refreshtimestamp);
+            $this->set("refresh_token", $decoded["refresh_token"]);
+            $access_token=$decoded["access_token"];
+            $this->set("access_token", $access_token);
+            return $access_token;
+        }
+
+        function logoutViaOAuth() {
+            $oauthType = $this->getGlobalSetting('oAuthType','');
+            $this->customLog($oauthType);
+            if($oauthType == "oauth2") {
+                $logoutEndpoint=$this->getGlobalSetting('OAuth2LogoutEndpoint');
+                $clientId=$this->getGlobalSetting('OAuth2ClientId');
+                $authParams = array(
+                    "grant_type" => "refresh_token",
+                    "client_id" => $clientId,
+                    "refresh_token" => $this->get("refresh_token", null, null, ""),
+                );
+                $this->customLog($logoutEndpoint . "Params : " . http_build_query($authParams));
+                $res = $this->httpPost($logoutEndpoint, http_build_query($authParams), false, "application/x-www-form-urlencoded");
+                $this->customLog("Res : " . $res);
+                $decoded=json_decode($res, true);
+                $this->customLog("Decoded : " . $decoded);
+                $this->set("refresh_token", null);
+                $this->set("access_token", null);
+                $this->set("refresh_expires_at", null);
+                $this->set("expire_at", null);
+            }
         }
 
 		/***** ***** ***** ***** *****
@@ -454,7 +500,6 @@ class LimeSurveyXAPITracker extends PluginBase
             $token=Yii::app()->request->getParam('token', null);
             $registrationIdKey="registration_" . $token ;
             $registrationId=$this->get($registrationIdKey, 'Survey', $surveyId);
-            $registrationAlreadySet=false;
             if ($comment === 'afterSurveyComplete') {
                 if($registrationId == null) {
                     error_log($registrationIdKey . "not found"); 
@@ -472,7 +517,6 @@ class LimeSurveyXAPITracker extends PluginBase
                     $registrationId=$this->uuidv4();
                     $this->customLog("Setting " . $registrationIdKey . "to " . $registrationId);
                     $this->set($registrationIdKey, $registrationId, "Survey", $surveyId);
-                    $registrationAlreadySet=true;
                 } else {
                     $this->customLog("Already found " . $registrationIdKey . " set to " . $registrationId);
                     $this->customLog("Start statement already sent.");
@@ -742,12 +786,17 @@ class LimeSurveyXAPITracker extends PluginBase
             curl_setopt($ch, CURLOPT_HTTPHEADER, $headers);
 
             $output = curl_exec($ch);
-            
+
             // Handle errors (optional)
             if (curl_errno($ch)) {
                 $this->customLog('HTTP call failed: ' . curl_error($ch));
-            }+
+            }
             curl_close($ch);
+
+            //if($authorization) {
+            //    $this->logoutViaOAuth();
+            //}
+
             return $output;
         }
 
