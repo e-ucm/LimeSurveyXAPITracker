@@ -59,6 +59,7 @@ class LimeSurveyXAPITracker extends PluginBase
                 $this->customLog($surveyId);
                 foreach($settingsArray as $key => $value) {
                     $this->customLog("key: $key, value: $value\n");
+                    $this->set($key, $value, "Survey", $surveyId);
                 }
             };
         }
@@ -66,6 +67,7 @@ class LimeSurveyXAPITracker extends PluginBase
         public function setGlobalSettings($settingsArray) {
             foreach($settingsArray as $key => $value) {
                 $this->customLog("key: $key, value: $value\n");
+                $this->set($name, $value, "global", null);
             }
         }
 
@@ -79,7 +81,7 @@ class LimeSurveyXAPITracker extends PluginBase
         } 
 
         public function beforeSurveySettings() {
-             $event = $this->event;
+            $event = $this->event;
             $surveyId = $event->get('survey');
             $settings=array();
             if((boolean)$this->getGlobalSetting('surveylrsendpoint', false)) {
@@ -370,7 +372,6 @@ class LimeSurveyXAPITracker extends PluginBase
             ]);
             $groups=$groupsResult['result'];
             // Get questions for each group
-            $i=1;
             foreach ($groups as $group) {
                 $gid = $group['gid'];
                 $groupName = $group['group_name'];
@@ -386,7 +387,6 @@ class LimeSurveyXAPITracker extends PluginBase
                     $questions=$questionsResult['result'];
                     return $questions;
                 }
-                $i++;
             }
         }
 
@@ -452,7 +452,33 @@ class LimeSurveyXAPITracker extends PluginBase
 
             // Get token from the URL manually
             $token=Yii::app()->request->getParam('token', null);
-            $registrationId=$this->uuidv4();
+            $registrationIdKey="registration_" . $token ;
+            $registrationId=$this->get($registrationIdKey, 'Survey', $surveyId);
+            $registrationAlreadySet=false;
+            if ($comment === 'afterSurveyComplete') {
+                if($registrationId == null) {
+                    error_log($registrationIdKey . "not found"); 
+                }
+                $this->customLog("Found " . $registrationIdKey . "set to " . $registrationId);
+                $this->customLog("Unset " . $registrationIdKey);
+                $this->set($registrationIdKey, null, "Survey", $surveyId);
+            } else if($comment === 'afterResponseSave') {
+                if($registrationId == null) {
+                    error_log($registrationIdKey . "not found"); 
+                }
+                $this->customLog("Found " . $registrationIdKey . "set to " . $registrationId);
+            } else {
+                if($registrationId == null) {
+                    $registrationId=$this->uuidv4();
+                    $this->customLog("Setting " . $registrationIdKey . "to " . $registrationId);
+                    $this->set($registrationIdKey, $registrationId, "Survey", $surveyId);
+                    $registrationAlreadySet=true;
+                } else {
+                    $this->customLog("Already found " . $registrationIdKey . " set to " . $registrationId);
+                    $this->customLog("Start statement already sent.");
+                    return;
+                }
+            }
             $actor=array(
                 "account" => 
                     array(
@@ -508,7 +534,6 @@ class LimeSurveyXAPITracker extends PluginBase
                     "context" => $context,
                     "timestamp" => $stringTimestampUTC
                 );
-                
                 $statements=array($progressedStatement, $completedStatement);
             } else if($comment === 'afterResponseSave') {
                 // Get the responses for the survey with the specified condition
@@ -624,7 +649,7 @@ class LimeSurveyXAPITracker extends PluginBase
                     $this->customLog(e);
                 }
             } else {
-                $sartedStatement = array(
+                $startedStatement = array(
                     "id"=>$this->uuidv4(),
                     "actor" => $actor,
                     "verb" => array("id"=> "http://adlnet.gov/expapi/verbs/initialized"),
@@ -645,7 +670,7 @@ class LimeSurveyXAPITracker extends PluginBase
                     "context" => $context,
                     "timestamp" => "$stringTimestampUTC"
                 );
-                $statements=array($sartedStatement, $progressedStatement);
+                $statements=array($startedStatement, $progressedStatement);
             }
             $postData=json_encode($statements);
             if((boolean)$this->getGlobalSetting('surveylrsendpoint', false)) {
