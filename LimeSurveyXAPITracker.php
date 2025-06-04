@@ -457,10 +457,10 @@ class LimeSurveyXAPITracker extends PluginBase
                 $this->customLog("Res : " . $res);
                 $decoded=json_decode($res, true);
                 $this->customLog("Decoded : " . $decoded);
-                $this->set("refresh_token", null);
-                $this->set("access_token", null);
-                $this->set("refresh_expires_at", null);
-                $this->set("expire_at", null);
+                $this->set("refresh_token", NULL);
+                $this->set("access_token", NULL);
+                $this->set("refresh_expires_at", NULL);
+                $this->set("expire_at", NULL);
             }
         }
 
@@ -506,7 +506,7 @@ class LimeSurveyXAPITracker extends PluginBase
                 }
                 $this->customLog("Found " . $registrationIdKey . "set to " . $registrationId);
                 $this->customLog("Unset " . $registrationIdKey);
-                $this->set($registrationIdKey, null, "Survey", $surveyId);
+                $this->set($registrationIdKey, NULL, "Survey", $surveyId);
             } else if($comment === 'afterResponseSave') {
                 if($registrationId == null) {
                     error_log($registrationIdKey . "not found"); 
@@ -726,7 +726,6 @@ class LimeSurveyXAPITracker extends PluginBase
             $result = $this->httpPost($url, $postData, true);
             $this->debug($url, $statements, $result, $time_start, $comment);
             return;
-
         }
 
         private function getLastResponse($surveyId, $token)
