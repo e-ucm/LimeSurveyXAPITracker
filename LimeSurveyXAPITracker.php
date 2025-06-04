@@ -370,6 +370,7 @@ class LimeSurveyXAPITracker extends PluginBase
                     return $questions;
                 }
             }
+            return array();
         }
 
         function loginViaOAuth() {
@@ -386,6 +387,7 @@ class LimeSurveyXAPITracker extends PluginBase
                     $time_start=microtime(true);
                     $this->customLog("Expire at : " . $expire_at . " start : " . $time_start);
                     if((int)$time_start > (int)$expire_at) {
+                        $refresh_expires_at=$this->get("refresh_expires_at", null, null, "");
                         if((int)$time_start > (int)$refresh_expires_at) {
                             $access_token=$this->authOAuth2ViaUserAndPassword($clientId, $username, $password);
                         } else {
