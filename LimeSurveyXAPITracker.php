@@ -329,7 +329,7 @@ class LimeSurveyXAPITracker extends PluginBase
                 $lang,  // sLanguageCodeReplace with your survey language code
                 'all', // sCompletionStatus Options: 'complete', 'incomplete', 'all'
                 'code', // sHeadingType Options: 'code', 'full', 'abbreviated'
-                'long', // sResponseType Options: 'short', 'long'
+                'short', // sResponseType Options: 'short', 'long'
             ]);
         
             if (isset($response['result'])) {
@@ -371,6 +371,19 @@ class LimeSurveyXAPITracker extends PluginBase
                 }
             }
             return array();
+        }
+
+        function exportQuestionPropertiesLRC($qid, $lang) {
+            // Get groups
+            $questionPropertiesResult = $this->limesurvey_api_request('get_question_properties', [
+                $this->sessionKey, 
+                $qid,
+                ["answeroptions", "question_theme_name"], 
+                $lang
+            ]);
+            $questionProperties=$questionPropertiesResult['result'];
+            $this->customLog(json_encode($questionProperties));
+            return $questionProperties;
         }
 
         function loginViaOAuth() {
@@ -535,7 +548,7 @@ class LimeSurveyXAPITracker extends PluginBase
             $context=array(
                 "contextActivities"=> array(
                     "category"=> array(
-                        array("id"=>"https://w3id.org/xapi/seriousgame")
+                        array("id"=>"https://w3id.org/xapi/scorm")
                     ),
                 ),
                 "registration"=>$registrationId,
@@ -543,9 +556,11 @@ class LimeSurveyXAPITracker extends PluginBase
             $surveyObject=array(
                 "id" => $surveyUrl,
                 "definition" => array(
-                    "type" => "https://w3id.org/xapi/seriousgames/activity-types/serious-game"
+                    "type" => "http://adlnet.gov/expapi/activities/assessment"
                 )
             );
+            $questionsContext=$context;
+            $questionsContext["contextActivities"]["parent"]=array($surveyObject);
             $stringTimestampUTC=gmdate('Y-m-d\TH:i:s\Z', (int)$time_start);
             // Access the API
             $api = $this->pluginManager->getAPI();
@@ -564,8 +579,8 @@ class LimeSurveyXAPITracker extends PluginBase
                     "object" => $surveyObject,
                     "verb" => array("id" => "http://adlnet.gov/expapi/verbs/progressed"),
                     "result" => array(
-                        "extensions" => array(
-                            "https://w3id.org/xapi/seriousgames/extensions/progress" => 1
+                        "score" => array(
+                            "scaled" => 1
                         )
                     ),
                     "context" => $context,
@@ -574,7 +589,7 @@ class LimeSurveyXAPITracker extends PluginBase
                 $completedStatement=array(
                     "id"=>$this->uuidv4(),
                     "actor" => $actor,
-                    "verb" => array("id" => "http://adlnet.gov/expapi/verbs/completed"),
+                    "verb" => array("id" => "http://adlnet.gov/expapi/verbs/terminated"),
                     "result" => array("success" => true, "completion" => true),
                     "object" => $surveyObject,
                     "context" => $context,
@@ -603,8 +618,10 @@ class LimeSurveyXAPITracker extends PluginBase
                     $isMulti=false;
                     $multiTitles=[];
                     foreach($questions as $question) {
+                        $questionProperties=$this->exportQuestionPropertiesLRC($question["id"], $lang);
                         $response="";
-                        if($question["question_theme_name"] === "arrays/array") {
+                        $interactionType=$questionProperties["question_theme_name"];
+                        if($questionProperties["question_theme_name"] === "arrays/array") {
                             $isMulti=true;
                             $multiTitle[$question["id"]]=$question;
                             $this->customLog($question["id"] . " is multi.");
@@ -617,6 +634,8 @@ class LimeSurveyXAPITracker extends PluginBase
                                 $titleUrl = $foundMultiTitle . "/" . $tmpTitle;
                                 $this->customLog($title);
                                 if(array_key_exists($title,$fullResponse)) {
+                                    $questionProperties=$this->exportQuestionPropertiesLRC($question["parent_qid"], $lang);
+                                    $interactionType="choice";
                                     $response=$fullResponse[$title];
                                     $this->customLog($response);
                                 } else {
@@ -642,27 +661,29 @@ class LimeSurveyXAPITracker extends PluginBase
                             }
                         }
                         if($response !== "") {
+                            $questionObject = array(
+                                "id" => "$surveyUrl/interactions/$titleUrl",
+                                "definition" => array(
+                                    "name"=> array(
+                                        $lang => $title,
+                                    ),
+                                    "description"=> array(
+                                        $lang => $question["question"],
+                                    ),
+                                    "interactionType" => $interactionType, // TODO The type of interaction. Possible values are: true-false, choice, fill-in, long-fill-in, matching, performance, sequencing, likert, numeric or other.
+                                    "choices" => $questionProperties["answeroptions"],
+                                    "type" => "http://adlnet.gov/expapi/activities/cmi.interaction"
+                                ),
+                            );
                             $statement = array(
                                 "id"=>$this->uuidv4(),
                                 "actor" => $actor,
-                                "verb" => array("id"=> "https://w3id.org/xapi/adb/verbs/selected"),
-                                "object" => array(
-                                    "id" => "$surveyUrl/$titleUrl",
-                                    "definition" => array(
-                                        "name"=> array(
-                                            $lang => $title,
-                                        ),
-                                        "description"=> array(
-                                            $lang => $question["question"],
-                                        ),
-                                        "type" => "http://adlnet.gov/expapi/activities/question"
-                                    ),
-                                    
-                                ),
+                                "verb" => array("id"=> "http://adlnet.gov/expapi/verbs/responded"),
+                                "object" => $questionObject,
                                 "result" => array(
                                     "response" => "$response"
                                 ),
-                                "context" => $context,
+                                "context" => $questionsContext,
                                 "timestamp" => "$stringTimestampUTC"
                             );
                             array_push($ResponsesStatement,$statement);
@@ -678,8 +699,8 @@ class LimeSurveyXAPITracker extends PluginBase
                             "verb" => array("id"=> "http://adlnet.gov/expapi/verbs/progressed"),
                             "object" => $surveyObject,
                             "result" => array(
-                                "extensions" => array(
-                                    "https://w3id.org/xapi/seriousgames/extensions/progress" => "$res"
+                                "score" => array(
+                                    "scaled" => "$res"
                                 )
                             ),
                             "context" => $context,
@@ -709,8 +730,8 @@ class LimeSurveyXAPITracker extends PluginBase
                     "object" => $surveyObject,
                     "verb" => array("id" => "http://adlnet.gov/expapi/verbs/progressed"),
                     "result" => array(
-                        "extensions" => array(
-                            "https://w3id.org/xapi/seriousgames/extensions/progress" => "0"
+                        "score" => array(
+                            "scaled" => "0"
                         )
                     ),
                     "context" => $context,
