@@ -127,6 +127,89 @@ class LimeSurveyXAPITracker extends PluginBase
             ));
         }
 
+        protected $limesurveyToXapiInteractionTypes = [
+            // 5-point choice (radio)
+            '5' => 'choice',
+
+            // Array (10-point choice)
+            'B' => 'likert',
+
+            // Array (5-point choice)
+            'A' => 'likert',
+
+            // Array (Flexible Labels) dual scale
+            '1' => 'likert',
+
+            // Array (Increase, Same, Decrease)
+            'E' => 'likert',
+
+            // Array (Multi Flexible) (Numbers)
+            ':' => 'likert',
+
+            // Array (Multi Flexible) (Text)
+            ';' => 'likert',
+
+            // Array (Yes/No/Uncertain)
+            'C' => 'likert',
+
+            // Array (flexible labels)
+            'F' => 'likert',
+
+            // Array (flexible labels) by column
+            'H' => 'likert',
+
+            // Boilerplate question (no direct xAPI equivalent, treated as text)
+            'X' => 'other',
+
+            // Date
+            'D' => 'fill-in',
+
+            // Gender (single choice)
+            'G' => 'choice',
+
+            // Huge free text
+            'U' => 'long-fill-in',
+
+            // Language switch (treated as text)
+            'I' => 'other',
+
+            // List (dropdown)
+            '!' => 'choice',
+
+            // List (radio)
+            'L' => 'choice',
+
+            // List with comment (choice + text)
+            'O' => 'choice', // (Comment can be stored separately)
+
+            // Long free text
+            'T' => 'long-fill-in',
+
+            // Multiple numerical input
+            'K' => 'numeric',
+
+            // Multiple options (checkboxes)
+            'M' => 'choice',
+
+            // Multiple options with comments (choice + text)
+            'P' => 'choice', // (Comments can be stored separately)
+
+            // Multiple short text
+            'Q' => 'fill-in',
+
+            // Numerical input
+            'N' => 'numeric',
+
+            // Ranking
+            'R' => 'sequencing',
+
+            // Short free text
+            'S' => 'fill-in',
+
+            // Yes/No
+            'Y' => 'true-false',
+        ];
+
         protected $settings = [];
 
         /**
@@ -298,7 +381,7 @@ class LimeSurveyXAPITracker extends PluginBase
             curl_setopt($ch, CURLOPT_HTTPHEADER, ['Content-Type: application/json']);
             $response = curl_exec($ch);
             curl_close($ch);
-            $this->customLog($response);
+            #$this->customLog($response);
             return json_decode($response, true);
         }
 
@@ -335,7 +418,7 @@ class LimeSurveyXAPITracker extends PluginBase
             if (isset($response['result'])) {
                 $responsesJson = base64_decode($response['result']);
                 $responses =json_decode($responsesJson, true)['responses'];
-                $this->customLog("Survey Responses: " . json_encode($responses));
+                #$this->customLog("Survey Responses: " . json_encode($responses));
                 return $responses[0];
             } else {
                 throw new Exception("Error fetching responses: " . $response['error']);
@@ -357,8 +440,8 @@ class LimeSurveyXAPITracker extends PluginBase
             foreach ($groups as $group) {
                 $gid = $group['gid'];
                 $groupName = $group['group_name'];
-                $this->customLog(json_encode($group));
-                $this->customLog($gid . " | " . $groupName . " Last page : ". $lastpage);
+                #$this->customLog(json_encode($group));
+                #$this->customLog($gid . " | " . $groupName . " Last page : ". $lastpage);
                 if($group["group_order"] == $lastpage) {
                     $questionsResult = $this->limesurvey_api_request('list_questions', [
                         $this->sessionKey, 
@@ -378,17 +461,59 @@ class LimeSurveyXAPITracker extends PluginBase
             $questionPropertiesResult = $this->limesurvey_api_request('get_question_properties', [
                 $this->sessionKey, 
                 $qid,
-                ["answeroptions", "question_theme_name"], 
+                ["answeroptions", "question_theme_name", "type"],
                 $lang
             ]);
             $questionProperties=$questionPropertiesResult['result'];
             $this->customLog(json_encode($questionProperties));
+            $questionProperties["interactionType"]=$this->limesurveyToXapiInteractionTypes[$questionProperties["type"]] ?? "other";
+            $this->customLog(json_encode($questionProperties));
+            switch ($questionProperties["interactionType"]) {
+                case "likert":
+                case "sequencing":
+                case "choice":
+                    $choices=array();
+                    $choicesNumbers=0;
+                    if(gettype($questionProperties["answeroptions"]) == "array") {
+                        $choicesId=array_keys($questionProperties["answeroptions"]);
+                        foreach($choicesId as $choice) {
+                            array_push($choices, array(
+                                "id" => $choice,
+                                "description" => array(
+                                    "$lang" => $questionProperties["answeroptions"][$choice]["answer"],
+                                )
+                            ));
+                        }
+                        $this->customLog(json_encode($choices));
+                        $questionProperties["answers"]=$choices;
+                    }
+                    if($questionProperties["type"] == "A" || $questionProperties["type"] == "5") {
+                        $choicesNumbers=5;
+                    } elseif($questionProperties["type"] == "B") {
+                        $choicesNumbers=10;
+                    }
+                    if($choicesNumbers !== 0) {
+                        for($i=1; $i <= $choicesNumbers ; $i++) {
+                            array_push($choices, array(
+                                "id" => $i,
+                                "description" => array(
+                                    "$lang" => $i,
+                                )
+                            ));
+                        }
+                        $questionProperties["answers"]=$choices;
+                    }
+                    break;
+                default:
+                    $this->customLog("Nothing to do");
+                    //code block
+            }
             return $questionProperties;
         }
 
         function loginViaOAuth() {
             $oauthType = $this->getGlobalSetting('oAuthType','');
-            $this->customLog($oauthType);
+            #$this->customLog($oauthType);
             $username=$this->getGlobalSetting('usernameOAuth');
             $password=$this->getGlobalSetting('passwordOAuth');
             if($oauthType == "oauth2") {
@@ -398,7 +523,7 @@ class LimeSurveyXAPITracker extends PluginBase
                 if($expire_at != "") {
                     $access_token=$this->get("access_token", null, null, "");
                     $time_start=microtime(true);
-                    $this->customLog("Expire at : " . $expire_at . " start : " . $time_start);
+                    #$this->customLog("Expire at : " . $expire_at . " start : " . $time_start);
                     if((int)$time_start > (int)$expire_at) {
                         $refresh_expires_at=$this->get("refresh_expires_at", null, null, "");
                         if((int)$time_start > (int)$refresh_expires_at) {
@@ -410,9 +535,9 @@ class LimeSurveyXAPITracker extends PluginBase
                                 "client_id" => $clientId,
                                 "refresh_token" => $refresh_token,
                             );
-                            $this->customLog($tokenEndpoint . "Params : " . http_build_query($authParams));
+                            #$this->customLog($tokenEndpoint . "Params : " . http_build_query($authParams));
                             $res = $this->httpPost($tokenEndpoint, http_build_query($authParams), false, "application/x-www-form-urlencoded");
-                            $this->customLog($res);
+                            #$this->customLog($res);
                             $decoded=json_decode($res, true);
                             $access_token=$decoded["access_token"];
                             $this->set("access_token", $access_token);
@@ -429,7 +554,7 @@ class LimeSurveyXAPITracker extends PluginBase
                 $token = base64_encode($combinedString);
                 $auth="Basic " . $token;
             }
-            $this->customLog("Type : " . $oauthType . " | Auth : " . $auth);
+            #$this->customLog("Type : " . $oauthType . " | Auth : " . $auth);
             return $auth;
         }
 
@@ -441,9 +566,9 @@ class LimeSurveyXAPITracker extends PluginBase
                 "username" => $username,
                 "password" => $password,
             );
-            $this->customLog($tokenEndpoint . "Params : " . http_build_query($authParams));
+            #$this->customLog($tokenEndpoint . "Params : " . http_build_query($authParams));
             $res = $this->httpPost($tokenEndpoint, http_build_query($authParams), false, "application/x-www-form-urlencoded");
-            $this->customLog($res);
+            #$this->customLog($res);
             $time_start=microtime(true);
             $decoded=json_decode($res, true);
             $timestamp= (int)$time_start + (int)$decoded["expires_in"];
@@ -458,7 +583,7 @@ class LimeSurveyXAPITracker extends PluginBase
 
         function logoutViaOAuth() {
             $oauthType = $this->getGlobalSetting('oAuthType','');
-            $this->customLog($oauthType);
+            #$this->customLog($oauthType);
             if($oauthType == "oauth2") {
                 $logoutEndpoint=$this->getGlobalSetting('OAuth2LogoutEndpoint');
                 $clientId=$this->getGlobalSetting('OAuth2ClientId');
@@ -467,11 +592,11 @@ class LimeSurveyXAPITracker extends PluginBase
                     "client_id" => $clientId,
                     "refresh_token" => $this->get("refresh_token", null, null, ""),
                 );
-                $this->customLog($logoutEndpoint . "Params : " . http_build_query($authParams));
+                #$this->customLog($logoutEndpoint . "Params : " . http_build_query($authParams));
                 $res = $this->httpPost($logoutEndpoint, http_build_query($authParams), false, "application/x-www-form-urlencoded");
-                $this->customLog("Res : " . $res);
+                #$this->customLog("Res : " . $res);
                 $decoded=json_decode($res, true);
-                $this->customLog("Decoded : " . $decoded);
+                #$this->customLog("Decoded : " . $decoded);
                 $this->set("refresh_token", NULL);
                 $this->set("access_token", NULL);
                 $this->set("refresh_expires_at", NULL);
@@ -498,13 +623,8 @@ class LimeSurveyXAPITracker extends PluginBase
                     return;
                 }
             }
-
-            if($bug) {
-                $this->customLog($comment . " : " . $surveyId);
-            }
             
             $surveyUrl = Yii::app()->getController()->createAbsoluteUrl('survey/index', array('sid' => $surveyId)); // Adjust 'lang' as needed.
-            $this->customLog($surveyUrl);
 
             // Try to fetch the current from the URL manually or default language
             $surveyInfo = Survey::model()->findByPk($surveyId);
@@ -517,14 +637,14 @@ class LimeSurveyXAPITracker extends PluginBase
             $registrationId=$this->get($registrationIdKey, 'Survey', $surveyId);
             if ($comment === 'afterSurveyComplete') {
                 if($registrationId == null) {
-                    error_log($registrationIdKey . "not found"); 
+                    $this->customLog($registrationIdKey . "not found"); 
                 }
                 $this->customLog("Found " . $registrationIdKey . "set to " . $registrationId);
                 $this->customLog("Unset " . $registrationIdKey);
                 $this->set($registrationIdKey, NULL, "Survey", $surveyId);
             } else if($comment === 'afterResponseSave') {
                 if($registrationId == null) {
-                    error_log($registrationIdKey . "not found"); 
+                    $this->customLog($registrationIdKey . "not found"); 
                 }
                 $this->customLog("Found " . $registrationIdKey . "set to " . $registrationId);
             } else {
@@ -607,7 +727,7 @@ class LimeSurveyXAPITracker extends PluginBase
                     ]);
                     // Count them
                     $page_count = count($groups);
-                    $this->customLog("total_pagecount : $page_count");
+                    #$this->customLog("total_pagecount : $page_count");
                     $total_pagecount=(int)$page_count;
                     // Step 1: Get a session key
                     $this->auth_LRC();
@@ -620,11 +740,10 @@ class LimeSurveyXAPITracker extends PluginBase
                     foreach($questions as $question) {
                         $questionProperties=$this->exportQuestionPropertiesLRC($question["id"], $lang);
                         $response="";
-                        $interactionType=$questionProperties["question_theme_name"];
-                        if($questionProperties["question_theme_name"] === "arrays/array") {
+                        if($question["question_theme_name"] === "arrays/array") {
                             $isMulti=true;
                             $multiTitle[$question["id"]]=$question;
-                            $this->customLog($question["id"] . " is multi.");
+                            #$this->customLog($question["id"] . " is multi.");
                         } elseif($isMulti) {
                             $title=$question["title"];
                             if(array_key_exists($question["parent_qid"], $multiTitle)) {
@@ -632,22 +751,21 @@ class LimeSurveyXAPITracker extends PluginBase
                                 $foundMultiTitle=$multiTitle[$question["parent_qid"]]["title"];
                                 $title=$foundMultiTitle . "[" . $tmpTitle . "]";
                                 $titleUrl = $foundMultiTitle . "/" . $tmpTitle;
-                                $this->customLog($title);
+                                #$this->customLog($title);
                                 if(array_key_exists($title,$fullResponse)) {
                                     $questionProperties=$this->exportQuestionPropertiesLRC($question["parent_qid"], $lang);
-                                    $interactionType="choice";
                                     $response=$fullResponse[$title];
-                                    $this->customLog($response);
+                                    #$this->customLog($response);
                                 } else {
-                                    $this->customLog($title .  "not found in response!");
+                                    #$this->customLog($title .  "not found in response!");
                                 }
                             } else {
                                 $titleUrl=$title;
                                 if(array_key_exists($title,$fullResponse)) {
                                     $response=$fullResponse[$title];
-                                    $this->customLog($response);
+                                    #$this->customLog($response);
                                 } else {
-                                    $this->customLog($title .  "not found in response!");
+                                    #$this->customLog($title .  "not found in response!");
                                 }
                             }
                         } else {
@@ -655,9 +773,9 @@ class LimeSurveyXAPITracker extends PluginBase
                             $titleUrl=$title;
                             if(array_key_exists($title,$fullResponse)) {
                                 $response=$fullResponse[$title];
-                                $this->customLog($response);
+                                #$this->customLog($response);
                             } else {
-                                $this->customLog($title .  " not found in response!");
+                                #$this->customLog($title .  " not found in response!");
                             }
                         }
                         if($response !== "") {
@@ -670,11 +788,25 @@ class LimeSurveyXAPITracker extends PluginBase
                                     "description"=> array(
                                         $lang => $question["question"],
                                     ),
-                                    "interactionType" => $interactionType, // TODO The type of interaction. Possible values are: true-false, choice, fill-in, long-fill-in, matching, performance, sequencing, likert, numeric or other.
-                                    "choices" => $questionProperties["answeroptions"],
-                                    "type" => "http://adlnet.gov/expapi/activities/cmi.interaction"
+                                    "interactionType" => $questionProperties["interactionType"], // The type of interaction. Possible values are: true-false, choice, fill-in, long-fill-in, matching, performance, sequencing, likert, numeric or other.
+                                    "type" => "http://adlnet.gov/expapi/activities/interaction"
                                 ),
                             );
+                            switch ($questionProperties["interactionType"]) {
+                                case "likert":
+                                    if(isset($questionProperties["answers"])) {
+                                        $questionObject["definition"]["scale"] = $questionProperties["answers"];
+                                    }
+                                    break;
+                                case "sequencing":
+                                case "choice":
+                                    if(isset($questionProperties["answers"])) {
+                                        $questionObject["definition"]["choices"] = $questionProperties["answers"];
+                                    }
+                                    break;
+                                default:
+                                    //code block
+                            }
                             $statement = array(
                                 "id"=>$this->uuidv4(),
                                 "actor" => $actor,
@@ -802,9 +934,7 @@ class LimeSurveyXAPITracker extends PluginBase
                 array_push($headers, "Authorization: " . $this->loginViaOAuth());
             }
             
-            if($bug) {
-                $this->customLog(implode(" , ", $headers));
-            }
+            $this->customLog(implode(" , ", $headers));
             curl_setopt($ch, CURLOPT_HTTPHEADER, $headers);
 
             $output = curl_exec($ch);
