@@ -464,9 +464,20 @@ class LimeSurveyXAPITracker extends PluginBase
                 ["answeroptions", "question_theme_name", "type"],
                 $lang
             ]);
-            $questionProperties=$questionPropertiesResult['result'];
+            $questionProperties = [];
+            if (
+                is_array($questionPropertiesResult)
+                && array_key_exists('result', $questionPropertiesResult)
+                && is_array($questionPropertiesResult['result'])
+            ) {
+                $questionProperties = $questionPropertiesResult['result'];
+            } else {
+                $this->customLog("get_question_properties returned invalid payload for qid " . $qid . ": " . json_encode($questionPropertiesResult));
+            }
+
             $this->customLog(json_encode($questionProperties));
-            $questionProperties["interactionType"]=$this->limesurveyToXapiInteractionTypes[$questionProperties["type"]] ?? "other";
+            $questionType = $questionProperties["type"] ?? null;
+            $questionProperties["interactionType"] = $this->limesurveyToXapiInteractionTypes[$questionType] ?? "other";
             $this->customLog(json_encode($questionProperties));
             switch ($questionProperties["interactionType"]) {
                 case "likert":
@@ -474,7 +485,7 @@ class LimeSurveyXAPITracker extends PluginBase
                 case "choice":
                     $choices=array();
                     $choicesNumbers=0;
-                    if(gettype($questionProperties["answeroptions"]) == "array") {
+                    if(isset($questionProperties["answeroptions"]) && is_array($questionProperties["answeroptions"])) {
                         $choicesId=array_keys($questionProperties["answeroptions"]);
                         foreach($choicesId as $choice) {
                             array_push($choices, array(
@@ -487,9 +498,9 @@ class LimeSurveyXAPITracker extends PluginBase
                         $this->customLog(json_encode($choices));
                         $questionProperties["answers"]=$choices;
                     }
-                    if($questionProperties["type"] == "A" || $questionProperties["type"] == "5") {
+                    if($questionType == "A" || $questionType == "5") {
                         $choicesNumbers=5;
-                    } elseif($questionProperties["type"] == "B") {
+                    } elseif($questionType == "B") {
                         $choicesNumbers=10;
                     }
                     if($choicesNumbers !== 0) {
