@@ -489,9 +489,9 @@ class LimeSurveyXAPITracker extends PluginBase
                         $choicesId=array_keys($questionProperties["answeroptions"]);
                         foreach($choicesId as $choice) {
                             array_push($choices, array(
-                                "id" => $choice,
+                                "id" => (string) $choice,
                                 "description" => array(
-                                    "$lang" => $questionProperties["answeroptions"][$choice]["answer"],
+                                    "$lang" => (string) $questionProperties["answeroptions"][$choice]["answer"],
                                 )
                             ));
                         }
@@ -506,9 +506,9 @@ class LimeSurveyXAPITracker extends PluginBase
                     if($choicesNumbers !== 0) {
                         for($i=1; $i <= $choicesNumbers ; $i++) {
                             array_push($choices, array(
-                                "id" => $i,
+                                "id" => (string) $i,
                                 "description" => array(
-                                    "$lang" => $i,
+                                    "$lang" => (string) $i,
                                 )
                             ));
                         }
@@ -843,7 +843,7 @@ class LimeSurveyXAPITracker extends PluginBase
                             "object" => $surveyObject,
                             "result" => array(
                                 "score" => array(
-                                    "scaled" => "$res"
+                                    "scaled" => $res
                                 )
                             ),
                             "context" => $context,
@@ -874,7 +874,7 @@ class LimeSurveyXAPITracker extends PluginBase
                     "verb" => array("id" => "http://adlnet.gov/expapi/verbs/progressed"),
                     "result" => array(
                         "score" => array(
-                            "scaled" => "0"
+                            "scaled" => 0
                         )
                     ),
                     "context" => $context,

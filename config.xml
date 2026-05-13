@@ -4,11 +4,11 @@
         <name>LimeSurveyXAPITracker</name>
         <type>plugin</type>
         <creationDate>2025-05-21</creationDate>
-        <lastUpdate>2025-05-21</lastUpdate>
+        <lastUpdate>2026-05-13</lastUpdate>
         <author>Santilario Berthilier, Julio - eUCM Team</author>
         <authorUrl>https://github.com/e-ucm/LimeSurveyXAPITracker</authorUrl>
-        <version>1.0.0</version>
-        <lastSecurityUpdate>1.0.0</lastSecurityUpdate>
+        <version>1.0.1</version>
+        <lastSecurityUpdate>1.0.1</lastSecurityUpdate>
         <license>-</license>
         <description>Send xAPI events for Limesurvey data.</description>
     </metadata>
