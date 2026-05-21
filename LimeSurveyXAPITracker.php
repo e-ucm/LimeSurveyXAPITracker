@@ -730,8 +730,8 @@ class LimeSurveyXAPITracker extends PluginBase
             } else if($comment === 'afterResponseSave') {
                 // Get the responses for the survey with the specified condition
                 $responses = $this->getLastResponse($surveyId, $token);
-                $lastpage=(int)$responses["lastpage"];
-                $timestamp=$responses["datestamp"];
+                $lastpage = isset($responses["lastpage"]) ? (int)$responses["lastpage"] : 0;
+                $timestamp = isset($responses["datestamp"]) ? $responses["datestamp"] : gmdate('Y-m-d H:i:s'); // fallback to current UTC time if missing
                 try {
                     $groups = QuestionGroup::model()->findAllByAttributes([
                         'sid' => $surveyId
