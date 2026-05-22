@@ -673,7 +673,7 @@ class LimeSurveyXAPITracker extends PluginBase
                 "account" => 
                     array(
                         "name" => $token,
-                        "homePage" => $this->getGlobalSetting('actorhomepage')
+                        "homePage" => $this->getGlobalSetting('actorHomepage')
                     )
             );
             $context=array(
