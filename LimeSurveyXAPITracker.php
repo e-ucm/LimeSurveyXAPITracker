@@ -456,13 +456,13 @@ class LimeSurveyXAPITracker extends PluginBase
             return array();
         }
 
-        function exportQuestionPropertiesLRC($qid, $lang) {
-            // Get groups
+        function exportQuestionPropertiesLRC($qid, $lang, $surveyLanguages) {
+            // Fetch properties for the first language (base)
             $questionPropertiesResult = $this->limesurvey_api_request('get_question_properties', [
                 $this->sessionKey, 
                 $qid,
                 ["answeroptions", "question_theme_name", "type"],
-                $lang
+                $surveyLanguages[0]
             ]);
             $questionProperties = [];
             if (
@@ -483,37 +483,56 @@ class LimeSurveyXAPITracker extends PluginBase
                 case "likert":
                 case "sequencing":
                 case "choice":
-                    $choices=array();
-                    $choicesNumbers=0;
-                    if(isset($questionProperties["answeroptions"]) && is_array($questionProperties["answeroptions"])) {
-                        $choicesId=array_keys($questionProperties["answeroptions"]);
-                        foreach($choicesId as $choice) {
-                            array_push($choices, array(
-                                "id" => (string) $choice,
-                                "description" => array(
-                                    "$lang" => (string) $questionProperties["answeroptions"][$choice]["answer"],
-                                )
-                            ));
+                    $choices = array();
+                    $choicesNumbers = 0;
+                    $answersById = array();
+                    // Fetch answeroptions for all languages and merge
+                    foreach ($surveyLanguages as $langCode) {
+                        $langPropsResult = $this->limesurvey_api_request('get_question_properties', [
+                            $this->sessionKey,
+                            $qid,
+                            ["answeroptions"],
+                            $langCode
+                        ]);
+                        if (
+                            is_array($langPropsResult)
+                            && array_key_exists('result', $langPropsResult)
+                            && is_array($langPropsResult['result'])
+                            && isset($langPropsResult['result']['answeroptions'])
+                        ) {
+                            foreach ($langPropsResult['result']['answeroptions'] as $choiceId => $choiceData) {
+                                if (!isset($answersById[$choiceId])) {
+                                    $answersById[$choiceId] = array(
+                                        'id' => (string)$choiceId,
+                                        'description' => array()
+                                    );
+                                }
+                                $answersById[$choiceId]['description'][$langCode] = (string)$choiceData['answer'];
+                            }
                         }
-                        $this->customLog(json_encode($choices));
-                        $questionProperties["answers"]=$choices;
                     }
-                    if($questionType == "A" || $questionType == "5") {
-                        $choicesNumbers=5;
-                    } elseif($questionType == "B") {
-                        $choicesNumbers=10;
+                    // Add numeric choices for likert if needed
+                    if ($questionType == "A" || $questionType == "5") {
+                        $choicesNumbers = 5;
+                    } elseif ($questionType == "B") {
+                        $choicesNumbers = 10;
                     }
-                    if($choicesNumbers !== 0) {
-                        for($i=1; $i <= $choicesNumbers ; $i++) {
-                            array_push($choices, array(
-                                "id" => (string) $i,
-                                "description" => array(
-                                    "$lang" => (string) $i,
-                                )
-                            ));
+                    if ($choicesNumbers !== 0) {
+                        for ($i = 1; $i <= $choicesNumbers; $i++) {
+                            if (!isset($answersById[$i])) {
+                                $answersById[$i] = array(
+                                    'id' => (string)$i,
+                                    'description' => array()
+                                );
+                            }
+                            foreach ($surveyLanguages as $langCode) {
+                                $answersById[$i]['description'][$langCode] = (string)$i;
+                            }
                         }
-                        $questionProperties["answers"]=$choices;
                     }
+                    // Re-index as array
+                    $choices = array_values($answersById);
+                    $questionProperties['answers'] = $choices;
                     break;
                 default:
                     $this->customLog("Nothing to do");
@@ -751,9 +770,16 @@ class LimeSurveyXAPITracker extends PluginBase
                     $ResponsesStatement=array();
                     $isMulti=false;
                     $multiTitles=[];
+                    // Get all available languages for the survey
+                    $surveyLanguages = array();
+                    if (isset($surveyInfo->additional_languages) && !empty($surveyInfo->additional_languages)) {
+                        $surveyLanguages = explode(' ', trim($surveyInfo->additional_languages));
+                    }
+                    array_unshift($surveyLanguages, $surveyInfo->language); // Ensure base language is first
                     foreach($questions as $question) {
                         $this->customLog("Question: " . json_encode($question));
-                        $questionProperties=$this->exportQuestionPropertiesLRC($question["id"], $lang);
+                        $questionProperties=$this->exportQuestionPropertiesLRC($question["id"], $lang,$surveyLanguages);
+                        $this->customLog("Question Properties: " . json_encode($questionProperties));
                         $response="";
                         if($question["question_theme_name"] === "arrays/array") {
                             $isMulti=true;
@@ -768,7 +794,7 @@ class LimeSurveyXAPITracker extends PluginBase
                                 $titleUrl = $foundMultiTitle . "/" . $tmpTitle;
                                 #$this->customLog($title);
                                 if(array_key_exists($title,$fullResponse)) {
-                                    $questionProperties=$this->exportQuestionPropertiesLRC($question["parent_qid"], $lang);
+                                    $questionProperties=$this->exportQuestionPropertiesLRC($question["parent_qid"], $lang,$surveyLanguages);
                                     $response=$fullResponse[$title];
                                     #$this->customLog($response);
                                 } else {
@@ -794,18 +820,11 @@ class LimeSurveyXAPITracker extends PluginBase
                             }
                         }
                         if($response !== "") {
-                            // Get all available languages for the survey
-                            $surveyLanguages = array();
-                            if (isset($surveyInfo->additional_languages) && !empty($surveyInfo->additional_languages)) {
-                                $surveyLanguages = explode(' ', trim($surveyInfo->additional_languages));
-                            }
-                            array_unshift($surveyLanguages, $surveyInfo->language); // Ensure base language is first
-
                             // Build name and description arrays for all languages
                             $nameLangs = array();
                             $descLangs = array();
                             foreach ($surveyLanguages as $langCode) {
-                                // Safely handle missing questionl10n
+                                // Use only for name/description, answers are now multilingual from exportQuestionPropertiesLRC
                                 if (isset($question["questionl10n"]) && is_array($question["questionl10n"])) {
                                     $questionTitle = isset($question["questionl10n"][$langCode]["title"]) && $question["questionl10n"][$langCode]["title"] !== '' && $question["questionl10n"][$langCode]["title"] !== $question["title"]
                                         ? $question["questionl10n"][$langCode]["title"]
@@ -835,45 +854,13 @@ class LimeSurveyXAPITracker extends PluginBase
                             switch ($questionProperties["interactionType"]) {
                                 case "likert":
                                     if(isset($questionProperties["answers"])) {
-                                        // Multilingual for likert scale
-                                        $scale = array();
-                                        foreach ($questionProperties["answers"] as $answer) {
-                                            $descLangs = array();
-                                            foreach ($surveyLanguages as $langCode) {
-                                                $desc = $answer["id"];
-                                                if (isset($answer["description"]) && isset($answer["description"]["$langCode"])) {
-                                                    $desc = $answer["description"]["$langCode"];
-                                                }
-                                                $descLangs[$langCode] = $desc;
-                                            }
-                                            $scale[] = array(
-                                                "id" => $answer["id"],
-                                                "description" => $descLangs
-                                            );
-                                        }
-                                        $questionObject["definition"]["scale"] = $scale;
+                                        $questionObject["definition"]["scale"] = $questionProperties["answers"];
                                     }
                                     break;
                                 case "sequencing":
                                 case "choice":
                                     if(isset($questionProperties["answers"])) {
-                                        // Multilingual for choices/sequencing
-                                        $choices = array();
-                                        foreach ($questionProperties["answers"] as $answer) {
-                                            $descLangs = array();
-                                            foreach ($surveyLanguages as $langCode) {
-                                                $desc = $answer["id"];
-                                                if (isset($answer["description"]) && isset($answer["description"]["$langCode"])) {
-                                                    $desc = $answer["description"]["$langCode"];
-                                                }
-                                                $descLangs[$langCode] = $desc;
-                                            }
-                                            $choices[] = array(
-                                                "id" => $answer["id"],
-                                                "description" => $descLangs
-                                            );
-                                        }
-                                        $questionObject["definition"]["choices"] = $choices;
+                                        $questionObject["definition"]["choices"] = $questionProperties["answers"];
                                     }
                                     break;
                                 default:
