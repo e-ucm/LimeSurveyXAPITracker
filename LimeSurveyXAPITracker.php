@@ -579,15 +579,18 @@ class LimeSurveyXAPITracker extends PluginBase
             );
             #$this->customLog($tokenEndpoint . "Params : " . http_build_query($authParams));
             $res = $this->httpPost($tokenEndpoint, http_build_query($authParams), false, "application/x-www-form-urlencoded");
-            #$this->customLog($res);
-            $time_start=microtime(true);
-            $decoded=json_decode($res, true);
-            $timestamp= (int)$time_start + (int)$decoded["expires_in"];
-            $refreshtimestamp= (int)$time_start + (int)$decoded["refresh_expires_in"];
+            $this->customLog($res);
+            $time_start = microtime(true);
+            $decoded = json_decode($res, true);
+            $expires_in = isset($decoded["expires_in"]) ? (int)$decoded["expires_in"] : 0;
+            $refresh_expires_in = isset($decoded["refresh_expires_in"]) ? (int)$decoded["refresh_expires_in"] : 0;
+            $refresh_token = $decoded["refresh_token"];
+            $access_token = $decoded["access_token"];
+            $timestamp = (int)$time_start + $expires_in;
+            $refreshtimestamp = (int)$time_start + $refresh_expires_in;
             $this->set("expire_at", $timestamp);
             $this->set("refresh_expires_at", $refreshtimestamp);
-            $this->set("refresh_token", $decoded["refresh_token"]);
-            $access_token=$decoded["access_token"];
+            $this->set("refresh_token", $refresh_token);
             $this->set("access_token", $access_token);
             return $access_token;
         }
@@ -749,6 +752,7 @@ class LimeSurveyXAPITracker extends PluginBase
                     $isMulti=false;
                     $multiTitles=[];
                     foreach($questions as $question) {
+                        $this->customLog("Question: " . json_encode($question));
                         $questionProperties=$this->exportQuestionPropertiesLRC($question["id"], $lang);
                         $response="";
                         if($question["question_theme_name"] === "arrays/array") {
@@ -790,29 +794,86 @@ class LimeSurveyXAPITracker extends PluginBase
                             }
                         }
                         if($response !== "") {
+                            // Get all available languages for the survey
+                            $surveyLanguages = array();
+                            if (isset($surveyInfo->additional_languages) && !empty($surveyInfo->additional_languages)) {
+                                $surveyLanguages = explode(' ', trim($surveyInfo->additional_languages));
+                            }
+                            array_unshift($surveyLanguages, $surveyInfo->language); // Ensure base language is first
+
+                            // Build name and description arrays for all languages
+                            $nameLangs = array();
+                            $descLangs = array();
+                            foreach ($surveyLanguages as $langCode) {
+                                // Safely handle missing questionl10n
+                                if (isset($question["questionl10n"]) && is_array($question["questionl10n"])) {
+                                    $questionTitle = isset($question["questionl10n"][$langCode]["title"]) && $question["questionl10n"][$langCode]["title"] !== '' && $question["questionl10n"][$langCode]["title"] !== $question["title"]
+                                        ? $question["questionl10n"][$langCode]["title"]
+                                        : (isset($question["questionl10n"][$langCode]["title"]) && $question["questionl10n"][$langCode]["title"] !== ''
+                                            ? $question["questionl10n"][$langCode]["title"]
+                                            : (isset($question["title"]) ? $question["title"] : $title));
+                                    $questionText = isset($question["questionl10n"][$langCode]["question"]) && $question["questionl10n"][$langCode]["question"] !== ''
+                                        ? $question["questionl10n"][$langCode]["question"]
+                                        : (isset($question["question"]) ? $question["question"] : $title);
+                                } else {
+                                    $questionTitle = isset($question["title"]) ? $question["title"] : $title;
+                                    $questionText = isset($question["question"]) ? $question["question"] : $title;
+                                }
+                                $nameLangs[$langCode] = $questionTitle;
+                                $descLangs[$langCode] = $questionText;
+                            }
+
                             $questionObject = array(
                                 "id" => "$surveyUrl/interactions/$titleUrl",
                                 "definition" => array(
-                                    "name"=> array(
-                                        $lang => $title,
-                                    ),
-                                    "description"=> array(
-                                        $lang => $question["question"],
-                                    ),
-                                    "interactionType" => $questionProperties["interactionType"], // The type of interaction. Possible values are: true-false, choice, fill-in, long-fill-in, matching, performance, sequencing, likert, numeric or other.
+                                    "name" => $nameLangs,
+                                    "description" => $descLangs,
+                                    "interactionType" => $questionProperties["interactionType"],
                                     "type" => "http://adlnet.gov/expapi/activities/interaction"
                                 ),
                             );
                             switch ($questionProperties["interactionType"]) {
                                 case "likert":
                                     if(isset($questionProperties["answers"])) {
-                                        $questionObject["definition"]["scale"] = $questionProperties["answers"];
+                                        // Multilingual for likert scale
+                                        $scale = array();
+                                        foreach ($questionProperties["answers"] as $answer) {
+                                            $descLangs = array();
+                                            foreach ($surveyLanguages as $langCode) {
+                                                $desc = $answer["id"];
+                                                if (isset($answer["description"]) && isset($answer["description"]["$langCode"])) {
+                                                    $desc = $answer["description"]["$langCode"];
+                                                }
+                                                $descLangs[$langCode] = $desc;
+                                            }
+                                            $scale[] = array(
+                                                "id" => $answer["id"],
+                                                "description" => $descLangs
+                                            );
+                                        }
+                                        $questionObject["definition"]["scale"] = $scale;
                                     }
                                     break;
                                 case "sequencing":
                                 case "choice":
                                     if(isset($questionProperties["answers"])) {
-                                        $questionObject["definition"]["choices"] = $questionProperties["answers"];
+                                        // Multilingual for choices/sequencing
+                                        $choices = array();
+                                        foreach ($questionProperties["answers"] as $answer) {
+                                            $descLangs = array();
+                                            foreach ($surveyLanguages as $langCode) {
+                                                $desc = $answer["id"];
+                                                if (isset($answer["description"]) && isset($answer["description"]["$langCode"])) {
+                                                    $desc = $answer["description"]["$langCode"];
+                                                }
+                                                $descLangs[$langCode] = $desc;
+                                            }
+                                            $choices[] = array(
+                                                "id" => $answer["id"],
+                                                "description" => $descLangs
+                                            );
+                                        }
+                                        $questionObject["definition"]["choices"] = $choices;
                                     }
                                     break;
                                 default:
