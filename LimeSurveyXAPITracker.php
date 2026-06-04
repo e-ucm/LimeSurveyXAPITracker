@@ -494,12 +494,16 @@ class LimeSurveyXAPITracker extends PluginBase
                     $answersById = array();
                     // Fetch answeroptions for all languages and merge
                     foreach ($surveyLanguages as $langCode) {
-                        $langPropsResult = $this->limesurvey_api_request('get_question_properties', [
-                            $this->sessionKey,
-                            $qid,
-                            ["answeroptions"],
-                            $langCode
-                        ]);
+                        if ($langCode === $lang) {
+                            $langPropsResult = array('result' => array('answeroptions' => $questionProperties['answeroptions'] ?? null));
+                        } else {
+                            $langPropsResult = $this->limesurvey_api_request('get_question_properties', [
+                                $this->sessionKey,
+                                $qid,
+                                ["answeroptions"],
+                                $langCode
+                            ]);
+                        }
                         if (
                             is_array($langPropsResult)
                             && array_key_exists('result', $langPropsResult)
@@ -607,13 +611,15 @@ class LimeSurveyXAPITracker extends PluginBase
             );
             #$this->customLog($tokenEndpoint . "Params : " . http_build_query($authParams));
             $res = $this->httpPost($tokenEndpoint, http_build_query($authParams), false, "application/x-www-form-urlencoded");
-            $this->customLog($res);
             $time_start = microtime(true);
             $decoded = json_decode($res, true);
+            if (!is_array($decoded) || !isset($decoded["access_token"])) {
+                throw new Exception("OAuth2 token endpoint returned invalid payload: " . (string)$res);
+            }
             $expires_in = isset($decoded["expires_in"]) ? (int)$decoded["expires_in"] : 0;
             $refresh_expires_in = isset($decoded["refresh_expires_in"]) ? (int)$decoded["refresh_expires_in"] : 0;
-            $refresh_token = $decoded["refresh_token"];
-            $access_token = $decoded["access_token"];
+            $refresh_token = $decoded["refresh_token"] ?? null;
+            $access_token = (string)$decoded["access_token"];
             $timestamp = (int)$time_start + $expires_in;
             $refreshtimestamp = (int)$time_start + $refresh_expires_in;
             $this->set("expire_at", $timestamp);
@@ -796,7 +802,7 @@ class LimeSurveyXAPITracker extends PluginBase
                     $multiLanguagesQuestions = array();
                     $ResponsesStatement=array();
                     $isMulti=false;
-                    $multiTitles=array();
+                    $multiTitle=array();
                     // Get all available languages for the survey
                     $surveyLanguages = array();
                     if (isset($surveyInfo->additional_languages) && !empty($surveyInfo->additional_languages)) {
