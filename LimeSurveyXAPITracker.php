@@ -32,21 +32,63 @@ class LimeSurveyXAPITracker extends PluginBase
             $this->subscribe('afterSurveyComplete');
             $this->subscribe('beforeSurveyPage');
             $this->subscribe('afterResponseSave');
+            $this->subscribe('newDirectRequest');
         }
 
         public function afterSurveyComplete() {
             $this->sendXAPIDataFromSurvey('afterSurveyComplete');
+            $this->ensureQueueTable();
+            $this->processQueue();
             return;
         }
 
         public function beforeSurveyPage() {
             $this->sendXAPIDataFromSurvey('beforeSurveyPage');
+            $this->injectLoadingOverlay();
             return;
         }
 
         public function afterResponseSave() {
             $this->sendXAPIDataFromSurvey('afterResponseSave');
             return;
+        }
+
+        public function newDirectRequest() {
+            $event = $this->event;
+            $action = $event->get('action');
+            if ($action === 'sendXAPI') {
+                $this->ensureQueueTable();
+                $surveyId = Yii::app()->request->getParam('surveyId');
+                $token = Yii::app()->request->getParam('token', '');
+                $batchSize = (int)$this->getGlobalSetting('batchSize', 5);
+                $batchInterval = (int)$this->getGlobalSetting('batchInterval', 2);
+                $lastQueueKey = "last_queue_" . $token;
+                $lastQueueTime = (int)$this->get($lastQueueKey, 'Survey', $surveyId);
+                $timeSinceLast = time() - $lastQueueTime;
+                $tableName = Yii::app()->db->tablePrefix . 'xapi_queue';
+                $pendingCount = (int)Yii::app()->db->createCommand()
+                    ->select('COUNT(*)')
+                    ->from($tableName)
+                    ->where("status = 'pending' AND survey_id = :sid AND token = :tok", array(
+                        ':sid' => $surveyId,
+                        ':tok' => $token,
+                    ))
+                    ->queryScalar();
+                $shouldProcess = ($pendingCount >= $batchSize) || ($timeSinceLast >= $batchInterval && $pendingCount > 0);
+                $processed = 0;
+                if ($shouldProcess) {
+                    $limit = $pendingCount >= $batchSize ? $batchSize : $pendingCount;
+                    $this->processQueue($surveyId, $token, $limit);
+                    $processed = $limit;
+                }
+                header('Content-Type: application/json');
+                echo json_encode(array(
+                    'success' => true,
+                    'processed' => $processed,
+                    'pending' => max(0, $pendingCount - $processed),
+                ));
+                Yii::app()->end();
+            }
         }
 
         public function setSurveySettings($surveyId, $settingsArray) {
@@ -97,6 +139,24 @@ class LimeSurveyXAPITracker extends PluginBase
                             'readonly' => !empty($endpoint)
                         ],
                         'default' => '',
+                    ),
+                    'info2' => array(
+                        'type' => 'info',
+                        'content' => '<h4>BATCH SETTINGS</h4>',
+                    ),
+                    'batchSize'=>array(
+                        'type'=>'string',
+                        'label'=>'Batch Size',
+                        'help'=>'Max xAPI statements to accumulate before sending to LRS (default: 5)',
+                        'current' => $this->getGlobalSetting('batchSize', 5),
+                        'default' => 5,
+                    ),
+                    'batchInterval'=>array(
+                        'type'=>'string',
+                        'label'=>'Batch Interval (seconds)',
+                        'help'=>'Seconds of inactivity before flushing queued statements (default: 2)',
+                        'current' => $this->getGlobalSetting('batchInterval', 2),
+                        'default' => 2,
                     )
                 );
             } else {
@@ -114,6 +174,24 @@ class LimeSurveyXAPITracker extends PluginBase
                             'readonly' => true
                         ],
                         'default' => '',
+                    ),
+                    'info3' => array(
+                        'type' => 'info',
+                        'content' => '<h4>BATCH SETTINGS</h4>',
+                    ),
+                    'batchSize'=>array(
+                        'type'=>'string',
+                        'label'=>'Batch Size',
+                        'help'=>'Max xAPI statements to accumulate before sending to LRS (default: 5)',
+                        'current' => $this->getGlobalSetting('batchSize', 5),
+                        'default' => 5,
+                    ),
+                    'batchInterval'=>array(
+                        'type'=>'string',
+                        'label'=>'Batch Interval (seconds)',
+                        'help'=>'Seconds of inactivity before flushing queued statements (default: 2)',
+                        'current' => $this->getGlobalSetting('batchInterval', 2),
+                        'default' => 2,
                     )
                 );
             }
@@ -1005,8 +1083,19 @@ class LimeSurveyXAPITracker extends PluginBase
                 $endpoint = $this->getGlobalSetting('lrsEndpoint');
             }
             $url = $endpoint . "/statements";
-            $result = $this->httpPost($url, $postData, true);
-            $this->debug($url, $statements, $result, $time_start, $comment);
+            $this->ensureQueueTable();
+            $tableName = Yii::app()->db->tablePrefix . 'xapi_queue';
+            Yii::app()->db->createCommand()->insert($tableName, array(
+                'survey_id' => $surveyId,
+                'token' => $token,
+                'statements' => $postData,
+                'endpoint' => $url,
+                'comment' => $comment,
+                'status' => 'pending',
+                'created_at' => date('Y-m-d H:i:s'),
+            ));
+            $this->set("last_queue_" . $token, time(), 'Survey', $surveyId);
+            $this->debug($url, $statements, 'queued', $time_start, $comment);
             return;
         }
 
@@ -1077,6 +1166,97 @@ class LimeSurveyXAPITracker extends PluginBase
             //}
 
             return $output;
+        }
+
+        /***** ***** ***** ***** *****
+        * loading overlay
+        ***** ***** ***** ***** *****/
+        private function injectLoadingOverlay()
+        {
+            $event = $this->getEvent();
+            $surveyId = $event->get('surveyId');
+            $token = Yii::app()->request->getParam('token', '');
+            $baseUrl = Yii::app()->getBaseUrl(true);
+            $ajaxUrl = $baseUrl . '/index.php?r=plugins/direct&plugin=LimeSurveyXAPITracker&action=sendXAPI&surveyId=' . $surveyId . '&token=' . urlencode($token);
+            $html = '<style>
+#ls-xapi-overlay{display:none;position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(255,255,255,.92);z-index:999999;justify-content:center;align-items:center}
+#ls-xapi-overlay.active{display:flex}
+#ls-xapi-overlay .spinner{width:48px;height:48px;border:4px solid #e0e0e0;border-top-color:#3498db;border-radius:50%;animation:ls-xapi-spin .8s linear infinite}
+@keyframes ls-xapi-spin{to{transform:rotate(360deg)}}
+</style>
+<div id="ls-xapi-overlay" data-surveyid="' . $surveyId . '" data-token="' . htmlspecialchars($token) . '"><div class="spinner"></div></div>
+<script>
+(function(){var o=document.getElementById("ls-xapi-overlay");if(!o)return;var s=function(){o.classList.add("active")};var h=function(){o.classList.remove("active")};var ajaxUrl="' . $ajaxUrl . '";document.addEventListener("submit",function(e){if(e.target.tagName==="FORM")s()},true);document.addEventListener("click",function(e){var t=e.target.closest("[name^=move],[name^=submit],.submitbutton");if(t)s()},true);function p(){var x=new XMLHttpRequest;x.open("GET",ajaxUrl);x.onload=function(){setTimeout(h,300)};x.onerror=h;x.send()}if(window.jQuery){jQuery(document).on("survey.ready newcontents",function(){setTimeout(p,500)})}else{window.addEventListener("pageshow",function(){setTimeout(p,500)})}})();
+</script>';
+            $event->getContent($this)->addContent($html);
+        }
+
+        /***** ***** ***** ***** *****
+        * queue management
+        ***** ***** ***** ***** *****/
+        private function ensureQueueTable()
+        {
+            $tableName = Yii::app()->db->tablePrefix . 'xapi_queue';
+            $sql = "CREATE TABLE IF NOT EXISTS {$tableName} (
+                id INT AUTO_INCREMENT PRIMARY KEY,
+                survey_id INT NOT NULL,
+                token VARCHAR(255) NOT NULL,
+                statements TEXT NOT NULL,
+                endpoint VARCHAR(500) DEFAULT '',
+                comment VARCHAR(50) DEFAULT '',
+                status ENUM('pending','sending','sent','failed') DEFAULT 'pending',
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                sent_at DATETIME NULL,
+                retry_count INT DEFAULT 0,
+                error_message TEXT NULL
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4";
+            Yii::app()->db->createCommand($sql)->execute();
+        }
+
+        private function processQueue($surveyId = null, $token = null, $limit = null)
+        {
+            $this->ensureQueueTable();
+            $tableName = Yii::app()->db->tablePrefix . 'xapi_queue';
+            $condition = "status = 'pending'";
+            $params = array();
+            if ($surveyId !== null) {
+                $condition .= " AND survey_id = :surveyId";
+                $params[':surveyId'] = $surveyId;
+            }
+            if ($token !== null) {
+                $condition .= " AND token = :tok";
+                $params[':tok'] = $token;
+            }
+            if ($limit === null) {
+                $limit = 50;
+            }
+            $items = Yii::app()->db->createCommand()
+                ->select('*')
+                ->from($tableName)
+                ->where($condition, $params)
+                ->order('id ASC')
+                ->limit($limit)
+                ->queryAll();
+            foreach ($items as $item) {
+                Yii::app()->db->createCommand()->update($tableName, array(
+                    'status' => 'sending',
+                ), 'id = :id', array(':id' => $item['id']));
+                try {
+                    $result = $this->httpPost($item['endpoint'], $item['statements'], true);
+                    $this->customLog("Queue item {$item['id']} sent: " . substr($result, 0, 100));
+                    Yii::app()->db->createCommand()->update($tableName, array(
+                        'status' => 'sent',
+                        'sent_at' => date('Y-m-d H:i:s'),
+                    ), 'id = :id', array(':id' => $item['id']));
+                } catch (Exception $e) {
+                    $this->customLog("Queue item {$item['id']} failed: " . $e->getMessage());
+                    Yii::app()->db->createCommand()->update($tableName, array(
+                        'status' => 'failed',
+                        'retry_count' => (int)$item['retry_count'] + 1,
+                        'error_message' => $e->getMessage(),
+                    ), 'id = :id', array(':id' => $item['id']));
+                }
+            }
         }
 
         /***** ***** ***** ***** *****
