@@ -747,6 +747,10 @@ class LimeSurveyXAPITracker extends PluginBase
             $stringTimestampUTC=gmdate('Y-m-d\TH:i:s\Z', (int)$time_start);
             // Access the API
             $api = $this->pluginManager->getAPI();
+            $groups = QuestionGroup::model()->findAllByAttributes(array(
+                'sid' => $surveyId
+            ));
+            $total_pagecount = count($groups);
             // Include response data only for completion
             if ($comment === 'afterSurveyComplete') {
                 $responseId = $event->get('responseId');
@@ -787,13 +791,6 @@ class LimeSurveyXAPITracker extends PluginBase
                 $responses = $this->getLastResponse($surveyId, $token);
                 $lastpage = isset($responses["lastpage"]) ? (int)$responses["lastpage"] : 0;
                 $timestamp = isset($responses["datestamp"]) ? $responses["datestamp"] : gmdate('Y-m-d H:i:s'); // fallback to current UTC time if missing
-                $groups = QuestionGroup::model()->findAllByAttributes(array(
-                    'sid' => $surveyId
-                ));
-                // Count them
-                $page_count = count($groups);
-                #$this->customLog("total_pagecount : $page_count");
-                $total_pagecount=(int)$page_count;
                 try {
                     // Step 1: Get a session key
                     $this->auth_LRC();
