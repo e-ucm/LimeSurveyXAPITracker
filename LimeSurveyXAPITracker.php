@@ -733,7 +733,8 @@ class LimeSurveyXAPITracker extends PluginBase
                         array("id"=>"https://w3id.org/xapi/scorm")
                     ),
                 ),
-                "registration"=>$registrationId
+                "registration"=>$registrationId,
+                "language"=>$lang
             );
             $surveyObject=array(
                 "id" => $surveyUrl,
@@ -742,7 +743,6 @@ class LimeSurveyXAPITracker extends PluginBase
                 )
             );
             $questionsContext=$context;
-            $questionsContext["language"]=$lang;
             $questionsContext["contextActivities"]["parent"]=array($surveyObject);
             $stringTimestampUTC=gmdate('Y-m-d\TH:i:s\Z', (int)$time_start);
             // Access the API
