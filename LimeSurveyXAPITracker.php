@@ -1,14 +1,11 @@
 <?php
 
 /***** ***** ***** ***** *****
-* Send a curl post request after each afterSurveyComplete event
+* Send xAPI traces for LimeSurvey responses
 *
-* @originalauthor Stefan Verweij <stefan@evently.nl>
-* @copyright 2016 Evently <https://www.evently.nl>
-  @author IrishWolf
-* @copyright 2023 Nerds Go Casual e.V.
+* @originalauthor Santilario Berthilier, Julio - eUCM Team <jsantila@ucm.es>
 * @license GPL v3
-* @version 1.0.0
+* @version 1.0.4
 *
 * This program is free software: you can redistribute it and/or modify
 * it under the terms of the GNU General Public License as published by
@@ -736,7 +733,7 @@ class LimeSurveyXAPITracker extends PluginBase
                         array("id"=>"https://w3id.org/xapi/scorm")
                     ),
                 ),
-                "registration"=>$registrationId,
+                "registration"=>$registrationId
             );
             $surveyObject=array(
                 "id" => $surveyUrl,
@@ -745,6 +742,7 @@ class LimeSurveyXAPITracker extends PluginBase
                 )
             );
             $questionsContext=$context;
+            $questionsContext["language"]=$lang;
             $questionsContext["contextActivities"]["parent"]=array($surveyObject);
             $stringTimestampUTC=gmdate('Y-m-d\TH:i:s\Z', (int)$time_start);
             // Access the API
@@ -765,7 +763,10 @@ class LimeSurveyXAPITracker extends PluginBase
                     "verb" => array("id" => "http://adlnet.gov/expapi/verbs/progressed"),
                     "result" => array(
                         "score" => array(
-                            "scaled" => 1
+                            "scaled" => 1,
+                            "raw" => $total_pagecount,
+                            "min" => 0,
+                            "max" => $total_pagecount
                         )
                     ),
                     "context" => $context,
@@ -786,14 +787,14 @@ class LimeSurveyXAPITracker extends PluginBase
                 $responses = $this->getLastResponse($surveyId, $token);
                 $lastpage = isset($responses["lastpage"]) ? (int)$responses["lastpage"] : 0;
                 $timestamp = isset($responses["datestamp"]) ? $responses["datestamp"] : gmdate('Y-m-d H:i:s'); // fallback to current UTC time if missing
+                $groups = QuestionGroup::model()->findAllByAttributes(array(
+                    'sid' => $surveyId
+                ));
+                // Count them
+                $page_count = count($groups);
+                #$this->customLog("total_pagecount : $page_count");
+                $total_pagecount=(int)$page_count;
                 try {
-                    $groups = QuestionGroup::model()->findAllByAttributes(array(
-                        'sid' => $surveyId
-                    ));
-                    // Count them
-                    $page_count = count($groups);
-                    #$this->customLog("total_pagecount : $page_count");
-                    $total_pagecount=(int)$page_count;
                     // Step 1: Get a session key
                     $this->auth_LRC();
                     // Step 2: Export responses
@@ -867,50 +868,50 @@ class LimeSurveyXAPITracker extends PluginBase
                             }
                         }
                         if($response !== "") {
-                        // Build name and description arrays for all languages
-                        $nameLangs = array();
-                        $descLangs = array();
-                        $this->customLog("Building multilingual content for question " . $question["id"] . " in language: " . $lang);
-                        $this->customLog("Survey question to process: " . json_encode($question));
-                        $defaultQuestionTitle = isset($question["title"]) ? $question["title"] : $title;
-                        $defaultQuestionText = isset($question["question"]) ? $question["question"] : $title;
-                        foreach ($surveyLanguages as $langCode) {
-                            if($langCode == $lang) {
-                                $this->customLog("Processing selected language: " . $langCode . " for question " . $question["id"]);
-                                // Default to question title for name and question text for description
-                                $questionTitle = $defaultQuestionTitle;
-                                $questionText = $defaultQuestionText;
-                            } else {
-                                $questionInLang = $multiLanguagesQuestions[$langCode][$question["id"]] ?? null;
-                                if ($questionInLang === null) {
-                                    $this->customLog("Warning: Question with ID " . $question["id"] . " not found for language " . $langCode . ". Using defaults.");
+                            // Build name and description arrays for all languages
+                            $nameLangs = array();
+                            $descLangs = array();
+                            $this->customLog("Building multilingual content for question " . $question["id"] . " in language: " . $lang);
+                            $this->customLog("Survey question to process: " . json_encode($question));
+                            $defaultQuestionTitle = isset($question["title"]) ? $question["title"] : $title;
+                            $defaultQuestionText = isset($question["question"]) ? $question["question"] : $title;
+                            foreach ($surveyLanguages as $langCode) {
+                                if($langCode == $lang) {
+                                    $this->customLog("Processing selected language: " . $langCode . " for question " . $question["id"]);
+                                    // Default to question title for name and question text for description
                                     $questionTitle = $defaultQuestionTitle;
                                     $questionText = $defaultQuestionText;
                                 } else {
-                                    $this->customLog("Found question for language " . $langCode . ": " . json_encode($questionInLang));
-                                    $questionTitle = isset($questionInLang["title"]) ? $questionInLang["title"] : $defaultQuestionTitle;
-                                    $questionText = isset($questionInLang["question"]) ? $questionInLang["question"] : $defaultQuestionText;
+                                    $questionInLang = $multiLanguagesQuestions[$langCode][$question["id"]] ?? null;
+                                    if ($questionInLang === null) {
+                                        $this->customLog("Warning: Question with ID " . $question["id"] . " not found for language " . $langCode . ". Using defaults.");
+                                        $questionTitle = $defaultQuestionTitle;
+                                        $questionText = $defaultQuestionText;
+                                    } else {
+                                        $this->customLog("Found question for language " . $langCode . ": " . json_encode($questionInLang));
+                                        $questionTitle = isset($questionInLang["title"]) ? $questionInLang["title"] : $defaultQuestionTitle;
+                                        $questionText = isset($questionInLang["question"]) ? $questionInLang["question"] : $defaultQuestionText;
+                                    }
                                 }
+                                // Ensure we're using the question title as the name (as requested in the example)
+                                $nameLangs[$langCode] = $questionTitle;
+                                $descLangs[$langCode] = $questionText;
                             }
-                            // Ensure we're using the question title as the name (as requested in the example)
-                            $nameLangs[$langCode] = $questionTitle;
-                            $descLangs[$langCode] = $questionText;
-                        }
-                        $this->customLog("Name langs: " . json_encode($nameLangs));
-                        $this->customLog("Desc langs: " . json_encode($descLangs));
+                            $this->customLog("Name langs: " . json_encode($nameLangs));
+                            $this->customLog("Desc langs: " . json_encode($descLangs));
 
-                        $questionObject = array(
-                            "id" => "$surveyUrl/interactions/$titleUrl",
-                            "definition" => array(
-                                "name" => $nameLangs,
-                                "description" => $descLangs,
-                                "interactionType" => $questionProperties["interactionType"],
-                                "type" => "http://adlnet.gov/expapi/activities/interaction"
-                            ),
-                        );
-                        
-                        // Debug logging to verify structure
-                        $this->customLog("Created questionObject: " . json_encode($questionObject));
+                            $questionObject = array(
+                                "id" => "$surveyUrl/interactions/$titleUrl",
+                                "definition" => array(
+                                    "name" => $nameLangs,
+                                    "description" => $descLangs,
+                                    "interactionType" => $questionProperties["interactionType"],
+                                    "type" => "http://adlnet.gov/expapi/activities/interaction"
+                                ),
+                            );
+                            
+                            // Debug logging to verify structure
+                            $this->customLog("Created questionObject: " . json_encode($questionObject));
                             switch ($questionProperties["interactionType"]) {
                                 case "likert":
                                     if(isset($questionProperties["answers"])) {
@@ -955,7 +956,10 @@ class LimeSurveyXAPITracker extends PluginBase
                             "object" => $surveyObject,
                             "result" => array(
                                 "score" => array(
-                                    "scaled" => $res
+                                    "scaled" => round($res, 2),
+                                    "raw" => $lastpage,
+                                    "min" => 0,
+                                    "max" => $total_pagecount
                                 )
                             ),
                             "context" => $context,
@@ -986,7 +990,10 @@ class LimeSurveyXAPITracker extends PluginBase
                     "verb" => array("id" => "http://adlnet.gov/expapi/verbs/progressed"),
                     "result" => array(
                         "score" => array(
-                            "scaled" => 0
+                            "scaled" => 0,
+                            "raw" => 0,
+                            "min" => 0,
+                            "max" => $total_pagecount
                         )
                     ),
                     "context" => $context,

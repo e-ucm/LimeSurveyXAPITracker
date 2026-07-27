@@ -2,7 +2,7 @@
 set -eo pipefail
 [[ "${DEBUG}" == "true" ]] && set -x
 
-: ${BUILD_VERSION:=1.0.3}
+: ${BUILD_VERSION:=1.0.4}
 
 SOURCE=${BASH_SOURCE[0]}
 while [ -L "$SOURCE" ]; do # resolve $SOURCE until the file is no longer a symlink
