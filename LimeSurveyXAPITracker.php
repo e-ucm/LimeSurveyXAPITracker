@@ -744,7 +744,8 @@ class LimeSurveyXAPITracker extends PluginBase
             );
             $questionsContext=$context;
             $questionsContext["contextActivities"]["parent"]=array($surveyObject);
-            $stringTimestampUTC=gmdate('Y-m-d\TH:i:s\Z', (int)$time_start);
+            $date = DateTime::createFromFormat('U.u', sprintf('%.6f', $time_start), new DateTimeZone('UTC'));
+            $stringTimestampUTC=$date->format('Y-m-d\TH:i:s.v\Z');
             // Access the API
             $api = $this->pluginManager->getAPI();
             $groups = QuestionGroup::model()->findAllByAttributes(array(
@@ -756,10 +757,6 @@ class LimeSurveyXAPITracker extends PluginBase
                 $responseId = $event->get('responseId');
                 // Fetch response data manually from the survey table
                 $response = $api->getResponse($surveyId, $responseId);
-                #$timestamp="";
-                #if(is_array($response) && isset($response['submitdate'])) {
-                #    $timestamp = $response['submitdate'];    
-                #}
                 $progressedStatement=array(
                     "id"=>$this->uuidv4(),
                     "actor" => $actor,
@@ -790,7 +787,6 @@ class LimeSurveyXAPITracker extends PluginBase
                 // Get the responses for the survey with the specified condition
                 $responses = $this->getLastResponse($surveyId, $token);
                 $lastpage = isset($responses["lastpage"]) ? (int)$responses["lastpage"] : 0;
-                $timestamp = isset($responses["datestamp"]) ? $responses["datestamp"] : gmdate('Y-m-d H:i:s'); // fallback to current UTC time if missing
                 try {
                     // Step 1: Get a session key
                     $this->auth_LRC();
