@@ -23,18 +23,77 @@
 
 class LimeSurveyXAPITracker extends PluginBase
 	{
-		protected $storage = 'DbStorage';
 		static protected $description = 'A simple xAPI Tracker for LimeSurvey';
 		static protected $name = 'LimeSurveyXAPITracker';
+
         protected $sessionKey = '';
+
+        protected static $dbVersion = 2;
 
 		public function init()
 		{ 
+            /* Set the config */
+            //$this->subscribe('afterPluginLoad', 'setConfigInAfterPluginLoad');
+
             $this->subscribe('beforeSurveySettings');
             $this->subscribe('newSurveySettings');
             $this->subscribe('afterSurveyComplete');
             $this->subscribe('beforeSurveyPage');
             $this->subscribe('afterResponseSave');
+        }
+
+        public function setConfigInAfterPluginLoad() {
+            if (!$this->getEvent()) {
+                throw new CHttpException(403);
+            }
+            $this->createDb();
+        }
+
+        public function createDb() {
+            if (intval($this->get("dbVersion")) >= self::$dbVersion) {
+                return;
+            }   
+
+            /* dbVersion not needed */
+            if (!$this->api->tableExists($this, 'responseLink') && !$this->api->tableExists($this, 'surveySession')) {
+                #$this->api->createTable(
+                #    $this,
+                #    'responseLink',
+                #    array(
+                #        'sid' => 'int not NULL',
+                #        'srid' => 'int not NULL',
+                #        'token' => 'text',
+                #        'accesscode' => 'text',
+                #    )
+                #);
+                #$this->api->createTable(
+                #    $this,
+                #    'surveySession',
+                #    array(
+                #        'sid' => 'int not NULL',
+                #        'srid' => 'int not NULL',
+                #        'token' => 'string(55)',
+                #        'session' => 'text',
+                #        'lastaction' => 'datetime',
+                #    )
+                #);
+                $this->set("dbVersion", 2);
+                return;
+            }
+
+            if (!$this->get("dbVersion") || $this->get("dbVersion") < 2) {
+                #$tableName = $this->api->getTable($this, 'surveySession')->tableName();
+                #App()->getDb()->createCommand()->alterColumn($tableName, 'sid', 'int not NULL');
+                #App()->getDb()->createCommand()->alterColumn($tableName, 'srid', 'int not NULL');
+                #$tableSchema = App()->getDb()->getSchema()->getTable($tableName, true);
+                #$tableName = $this->api->getTable($this, 'responseLink')->tableName();
+                #App()->getDb()->createCommand()->alterColumn($tableName, 'sid', 'int not NULL');
+                #App()->getDb()->createCommand()->alterColumn($tableName, 'srid', 'int not NULL');
+                #$tableSchema = App()->getDb()->getSchema()->getTable($tableName, true);
+                #$this->set("dbVersion", 3);
+            }
+            /* all done */
+            $this->set("dbVersion", self::$dbVersion);
         }
 
         public function afterSurveyComplete() {
@@ -219,15 +278,6 @@ class LimeSurveyXAPITracker extends PluginBase
             /* Definition and default */
             $fixedPluginSettings = $this->getFixedGlobalSetting();
 		    $this->settings = array(
-                'baseUrlLRC' => array(
-                    'type' => 'string',
-                    'label' => 'The default Remote Control URL',
-                    'default' => $this->getGlobalSetting('baseUrlLRC', ''),
-                    'htmlOptions' => [
-                        'readonly' => in_array('baseUrlLRC', $fixedPluginSettings)
-                    ],
-                    'help' => 'The default Remote Control URL'
-                ),
                 'usernameLRC' => array(
                     'type' => 'string',
                     'label' => 'Remote Control Username',
@@ -373,8 +423,9 @@ class LimeSurveyXAPITracker extends PluginBase
                 'params' => $params,
                 'id'     => 1,
             ]);
-
-            $ch = curl_init($this->getGlobalSetting('baseUrlLRC'));
+            $url = Yii::app()->createAbsoluteUrl('index.php/admin/remotecontrol');
+            $this->customLog($url);
+            $ch = curl_init($url);
             curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
             curl_setopt($ch, CURLOPT_POST, true);
             curl_setopt($ch, CURLOPT_POSTFIELDS, $request);
