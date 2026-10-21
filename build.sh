@@ -2,7 +2,7 @@
 set -eo pipefail
 [[ "${DEBUG}" == "true" ]] && set -x
 
-: ${BUILD_VERSION:=1.0.2}
+: ${BUILD_VERSION:=1.0.4}
 
 SOURCE=${BASH_SOURCE[0]}
 while [ -L "$SOURCE" ]; do # resolve $SOURCE until the file is no longer a symlink
@@ -67,7 +67,7 @@ fi
 mkdir "$SCRIPT_DIR/builds-$BUILD_VERSION"
 
 pushd "$SCRIPT_DIR"
-zip -r $SCRIPT_DIR/builds-$BUILD_VERSION/$PLUGIN_NAME-$BUILD_VERSION.zip ./ -x "*.git*" "*.sh*" "*builds-*" "*.md*"  "*.csv*" "*generated*"
+zip -r $SCRIPT_DIR/builds-$BUILD_VERSION/$PLUGIN_NAME-$BUILD_VERSION.zip ./ -x "*.git*" "*.sh*" "*builds-*" "*.md*"  "*.csv*" ".opencode*" "AGENTS.md" "*generated*"
 popd
 
 pushd "$SCRIPT_DIR/builds-$BUILD_VERSION"
